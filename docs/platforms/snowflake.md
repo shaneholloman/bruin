@@ -19,7 +19,7 @@ There's 2 different ways to fill it in
           schema: "schema_name" # optional
           warehouse: "warehouse_name" # optional
           role: "data_analyst" # optional
-          region: "eu-west1" # optional
+          region: "eu-west1" # required
           private_key_path: "path/to/private_key" # optional
 ```
 
@@ -45,7 +45,7 @@ You can configure the private key in two ways:
           schema: "schema_name" # optional
           warehouse: "warehouse_name" # optional
           role: "data_analyst" # optional
-          region: "eu-west1" # optional
+          region: "eu-west1" # required
           private_key_path: "path/to/private_key" # optional
 ```
 
@@ -61,7 +61,7 @@ You can configure the private key in two ways:
           schema: "schema_name" # optional
           warehouse: "warehouse_name" # optional
           role: "data_analyst" # optional
-          region: "eu-west1" # optional
+          region: "eu-west1" # required
           private_key: |
             -----BEGIN PRIVATE KEY-----
             OEKLvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEIAoIBAQC0Xc2pIYcLxdve
@@ -115,6 +115,62 @@ In your `.bruin.yml` file, update the Snowflake connection configuration to incl
 ```
 
 For more details on how to set up key-based authentication, see [this guide](https://select.dev/docs/snowflake-developer-guide/snowflake-key-pair).
+
+## Query Tags
+
+Bruin automatically sets Snowflake's [`QUERY_TAG`](https://docs.snowflake.com/en/sql-reference/parameters#query-tag) on every query it executes when the `--query-annotations` flag is enabled. This makes it easy to trace queries back to their source asset and pipeline in Snowflake's `QUERY_HISTORY`.
+
+The tag is a JSON string containing:
+
+| Field      | Description                          |
+|------------|--------------------------------------|
+| `asset`    | The name of the asset being executed |
+| `type`     | The query type, e.g. `main`         |
+| `pipeline` | The pipeline the asset belongs to    |
+
+### Adding custom metadata to query tags
+
+You can include your own key-value pairs in the query tag by using the `tags` and `meta` fields on the asset definition. The `meta` fields are merged directly into the tag JSON, and `tags` is included as an array.
+
+```bruin-sql
+/* @bruin
+name: events.install
+type: sf.sql
+materialization:
+    type: table
+
+tags:
+  - production
+  - critical
+
+meta:
+  owner: data-team
+  cost-center: engineering
+@bruin */
+
+select user_id, ts, platform, country
+from analytics.events
+where event_name = "install"
+```
+
+This produces a query tag like:
+
+```json
+{"asset":"events.install","type":"main","pipeline":"my_pipeline","owner":"data-team","cost-center":"engineering","tags":["production","critical"]}
+```
+
+You can query these tags in Snowflake:
+
+```sql
+select
+    query_id,
+    parse_json(query_tag):asset::string as asset,
+    parse_json(query_tag):pipeline::string as pipeline,
+    parse_json(query_tag):owner::string as owner
+from table(information_schema.query_history())
+where try_parse_json(query_tag):asset is not null
+order by start_time desc;
+```
 
 ## Snowflake Assets
 
@@ -211,7 +267,7 @@ Checks if the data available in upstream table for end date of the run.
 name: analytics_123456789.events
 type: sf.sensor.query
 parameters:
-    query: select exists(select 1 from upstream_table where dt = "{{ end_date }}"
+    query: select exists(select 1 from upstream_table where dt = "{{ end_date }}")
 ```
 
 #### Example: Streaming upstream table
@@ -222,7 +278,7 @@ Checks if there is any data after end timestamp, by assuming that older data is 
 name: analytics_123456789.events
 type: sf.sensor.query
 parameters:
-    query: select exists(select 1 from upstream_table where inserted_at > "{{ end_timestamp }}"
+    query: select exists(select 1 from upstream_table where inserted_at > "{{ end_timestamp }}")
 ```
 
 ### `sf.seed`
@@ -264,4 +320,53 @@ Example CSV:
 name,networking_through,position,contact_date
 Y,LinkedIn,SDE,2024-01-01
 B,LinkedIn,SDE 2,2024-01-01
+```
+
+### `sf.source`
+
+Defines Snowflake source assets for documenting existing tables and views in your Snowflake database. These assets are no-op (they don't execute), but are useful for:
+
+- Documenting existing Snowflake tables and views
+- Adding column descriptions and metadata
+- Establishing lineage relationships
+- Query preview functionality in the VSCode extension
+
+#### Example: Document an existing Snowflake table
+
+```yaml
+name: RAW.CUSTOMER_DATA
+type: sf.source
+description: "Raw customer data ingested from the CRM system"
+connection: snowflake-default
+
+tags:
+  - raw
+  - crm
+domains:
+  - customers
+
+meta:
+  business_owner: "Customer Success Team"
+  data_steward: "data-eng@company.com"
+  refresh_frequency: "daily"
+
+depends:
+  - RAW.CRM_SYNC
+
+columns:
+  - name: CUSTOMER_ID
+    type: "NUMBER"
+    description: "Unique identifier for each customer"
+  - name: FIRST_NAME
+    type: "VARCHAR"
+    description: "Customer first name"
+  - name: LAST_NAME
+    type: "VARCHAR"
+    description: "Customer last name"
+  - name: SIGNUP_DATE
+    type: "TIMESTAMP_NTZ"
+    description: "Date and time the customer signed up"
+  - name: ACCOUNT_STATUS
+    type: "VARCHAR"
+    description: "Current account status such as active, inactive, or suspended"
 ```

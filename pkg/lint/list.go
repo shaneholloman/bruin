@@ -15,7 +15,7 @@ type repoFinder interface {
 	Repo(path string) (*git.Repo, error)
 }
 
-func GetRules(fs afero.Fs, finder repoFinder, excludeWarnings bool, parser *sqlparser.SQLParser, cacheFoundGlossary bool) ([]Rule, error) {
+func GetRules(fs afero.Fs, finder repoFinder, excludeWarnings bool, parser sqlparser.Parser, cacheFoundGlossary bool) ([]Rule, error) {
 	gr := GlossaryChecker{
 		gr: &glossary.GlossaryReader{
 			RepoFinder: finder,
@@ -25,7 +25,7 @@ func GetRules(fs afero.Fs, finder repoFinder, excludeWarnings bool, parser *sqlp
 	}
 
 	yamlFileValidator := WarnRegularYamlFiles{fs: fs}
-	unknownFieldsValidator := validateUnknownPipelineFields{fs: fs}
+	unknownFieldsValidator := validateUnknownYAMLFields{fs: fs}
 
 	rules := []Rule{
 		&SimpleRule{
@@ -106,6 +106,34 @@ func GetRules(fs afero.Fs, finder repoFinder, excludeWarnings bool, parser *sqlp
 			Severity:         ValidatorSeverityCritical,
 			Validator:        EnsureMSTeamsFieldInPipelineIsValid,
 			ApplicableLevels: []Level{LevelPipeline},
+		},
+		&SimpleRule{
+			Identifier:       "valid-discord-notification",
+			Fast:             true,
+			Severity:         ValidatorSeverityCritical,
+			Validator:        EnsureDiscordFieldInPipelineIsValid,
+			ApplicableLevels: []Level{LevelPipeline},
+		},
+		&SimpleRule{
+			Identifier:       "valid-asset-slack-notification",
+			Fast:             true,
+			Severity:         ValidatorSeverityCritical,
+			AssetValidator:   EnsureSlackFieldInAssetIsValid,
+			ApplicableLevels: []Level{LevelAsset},
+		},
+		&SimpleRule{
+			Identifier:       "valid-asset-ms-teams-notification",
+			Fast:             true,
+			Severity:         ValidatorSeverityCritical,
+			AssetValidator:   EnsureMSTeamsFieldInAssetIsValid,
+			ApplicableLevels: []Level{LevelAsset},
+		},
+		&SimpleRule{
+			Identifier:       "valid-asset-discord-notification",
+			Fast:             true,
+			Severity:         ValidatorSeverityCritical,
+			AssetValidator:   EnsureDiscordFieldInAssetIsValid,
+			ApplicableLevels: []Level{LevelAsset},
 		},
 		&SimpleRule{
 			Identifier:       "materialization-config",
@@ -257,8 +285,15 @@ func GetRules(fs afero.Fs, finder repoFinder, excludeWarnings bool, parser *sqlp
 			Identifier:       "unknown-pipeline-fields",
 			Fast:             true,
 			Severity:         ValidatorSeverityWarning,
-			Validator:        unknownFieldsValidator.Validate,
+			Validator:        unknownFieldsValidator.ValidatePipeline,
 			ApplicableLevels: []Level{LevelPipeline},
+		},
+		&SimpleRule{
+			Identifier:       "unknown-asset-fields",
+			Fast:             true,
+			Severity:         ValidatorSeverityWarning,
+			AssetValidator:   unknownFieldsValidator.ValidateAsset,
+			ApplicableLevels: []Level{LevelAsset},
 		},
 		&SimpleRule{
 			Identifier:             "cross-pipeline-uri-dependencies",

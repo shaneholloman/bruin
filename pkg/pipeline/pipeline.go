@@ -55,6 +55,7 @@ const (
 	AssetTypeDuckDBQuerySensor         = AssetType("duckdb.sensor.query")
 	AssetTypeDuckDBSeed                = AssetType("duckdb.seed")
 	AssetTypeDuckDBSource              = AssetType("duckdb.source")
+	AssetTypeDynamoDB                  = AssetType("dynamodb")
 	AssetTypeElasticsearch             = AssetType("elasticsearch")
 	AssetTypeEmpty                     = AssetType("empty")
 	AssetTypeEMRServerlessPyspark      = AssetType("emr_serverless.pyspark")
@@ -96,6 +97,8 @@ const (
 	AssetTypeQlikSense                 = AssetType("qliksense")
 	AssetTypeQlikView                  = AssetType("qlikview")
 	AssetTypeQuicksight                = AssetType("quicksight")
+	AssetTypeQuicksightDashboard       = AssetType("quicksight.dashboard")
+	AssetTypeQuicksightDataset         = AssetType("quicksight.dataset")
 	AssetTypeR                         = AssetType("r")
 	AssetTypeRedash                    = AssetType("redash")
 	AssetTypeRedshiftQuery             = AssetType("rs.sql")
@@ -541,11 +544,12 @@ func (ccv *ColumnCheckValue) ToString() string {
 }
 
 type ColumnCheck struct {
-	ID          string           `json:"id" yaml:"-" mapstructure:"-"`
-	Name        string           `json:"name" yaml:"name,omitempty" mapstructure:"name"`
-	Value       ColumnCheckValue `json:"value" yaml:"value,omitempty" mapstructure:"value"`
-	Blocking    DefaultTrueBool  `json:"blocking" yaml:"blocking,omitempty" mapstructure:"blocking"`
-	Description string           `json:"description" yaml:"description,omitempty" mapstructure:"description"`
+	ID            string           `json:"id" yaml:"-" mapstructure:"-"`
+	Name          string           `json:"name" yaml:"name,omitempty" mapstructure:"name"`
+	Value         ColumnCheckValue `json:"value" yaml:"value,omitempty" mapstructure:"value"`
+	Blocking      DefaultTrueBool  `json:"blocking" yaml:"blocking,omitempty" mapstructure:"blocking"`
+	Description   string           `json:"description" yaml:"description,omitempty" mapstructure:"description"`
+	Notifications *Notifications   `json:"notifications,omitempty" yaml:"notifications,omitempty" mapstructure:"notifications"`
 }
 
 func NewColumnCheck(assetName, columnName, name string, value ColumnCheckValue, blocking *bool, description string) ColumnCheck {
@@ -669,12 +673,15 @@ var AssetTypeConnectionMapping = map[AssetType]string{
 	AssetTypeOracleQuery:               "oracle",
 	AssetTypeOracleSource:              "oracle",
 	AssetTypeS3KeySensor:               "aws",
+	AssetTypeDynamoDB:                  "dynamodb",
 	AssetTypeElasticsearch:             "elasticsearch",
 	AssetTypeVerticaQuery:              "vertica",
 	AssetTypeVerticaSeed:               "vertica",
 	AssetTypeVerticaQuerySensor:        "vertica",
 	AssetTypeVerticaTableSensor:        "vertica",
 	AssetTypeVerticaSource:             "vertica",
+	AssetTypeQuicksightDataset:         "quicksight",
+	AssetTypeQuicksightDashboard:       "quicksight",
 }
 
 var IngestrTypeConnectionMapping = map[string]AssetType{
@@ -690,6 +697,7 @@ var IngestrTypeConnectionMapping = map[string]AssetType{
 	"clickhouse":    AssetTypeClickHouse,
 	"oracle":        AssetTypeOracleQuery,
 	"motherduck":    AssetTypeMotherduckQuery,
+	"dynamodb":      AssetTypeDynamoDB,
 	"elasticsearch": AssetTypeElasticsearch,
 	"vertica":       AssetTypeVerticaQuery,
 }
@@ -716,13 +724,14 @@ func (s SecretMapping) MarshalYAML() (interface{}, error) {
 }
 
 type CustomCheck struct {
-	ID          string          `json:"id" yaml:"-" mapstructure:"-"`
-	Name        string          `json:"name" yaml:"name" mapstructure:"name"`
-	Description string          `json:"description" yaml:"description,omitempty" mapstructure:"description"`
-	Value       int64           `json:"value" yaml:"value" mapstructure:"value"`
-	Count       *int64          `json:"count,omitempty" yaml:"count,omitempty" mapstructure:"count"`
-	Blocking    DefaultTrueBool `json:"blocking" yaml:"blocking,omitempty" mapstructure:"blocking"`
-	Query       string          `json:"query" yaml:"query" mapstructure:"query"`
+	ID            string          `json:"id" yaml:"-" mapstructure:"-"`
+	Name          string          `json:"name" yaml:"name" mapstructure:"name"`
+	Description   string          `json:"description" yaml:"description,omitempty" mapstructure:"description"`
+	Value         int64           `json:"value" yaml:"value" mapstructure:"value"`
+	Count         *int64          `json:"count,omitempty" yaml:"count,omitempty" mapstructure:"count"`
+	Blocking      DefaultTrueBool `json:"blocking" yaml:"blocking,omitempty" mapstructure:"blocking"`
+	Query         string          `json:"query" yaml:"query" mapstructure:"query"`
+	Notifications *Notifications  `json:"notifications,omitempty" yaml:"notifications,omitempty" mapstructure:"notifications"`
 }
 
 type DependsColumn struct {
@@ -816,6 +825,7 @@ type Asset struct { //nolint:recvcheck
 	RerunCooldown     *int               `json:"rerun_cooldown,omitempty" yaml:"rerun_cooldown,omitempty" mapstructure:"rerun_cooldown"`
 	RetriesDelay      *int               `json:"retries_delay,omitempty" yaml:"-" mapstructure:"-"`
 	RefreshRestricted *bool              `json:"refresh_restricted,omitempty" yaml:"refresh_restricted,omitempty" mapstructure:"refresh_restricted"`
+	Notifications     *Notifications     `json:"notifications,omitempty" yaml:"notifications,omitempty" mapstructure:"notifications"`
 
 	upstream   []*Asset
 	downstream []*Asset
@@ -1540,6 +1550,7 @@ type Pipeline struct {
 	Tags               EmptyStringArray       `json:"tags" yaml:"tags,omitempty" mapstructure:"tags"`
 	Domains            EmptyStringArray       `json:"domains" yaml:"domains,omitempty" mapstructure:"domains"`
 	Meta               EmptyStringMap         `json:"meta" yaml:"meta,omitempty" mapstructure:"meta"`
+	Owner              string                 `json:"owner" yaml:"owner,omitempty" mapstructure:"owner"`
 	Schedule           Schedule               `json:"schedule" yaml:"schedule,omitempty" mapstructure:"schedule"`
 	StartDate          string                 `json:"start_date" yaml:"start_date,omitempty" mapstructure:"start_date"`
 	DefinitionFile     DefinitionFile         `json:"definition_file" yaml:"-"`
@@ -2162,8 +2173,12 @@ func (b *Builder) CreateAssetFromFile(filePath string, foundPipeline *Pipeline) 
 		task.Type = AssetTypeR
 	}
 
-	task.DefinitionFile.Name = filepath.Base(filePath)
-	task.DefinitionFile.Path = filePath
+	absPath, absErr := filepath.Abs(filePath)
+	if absErr != nil {
+		absPath = filePath
+	}
+	task.DefinitionFile.Name = filepath.Base(absPath)
+	task.DefinitionFile.Path = absPath
 	task.DefinitionFile.Type = CommentTask
 	if isSeparateDefinitionFile {
 		task.DefinitionFile.Type = YamlTask

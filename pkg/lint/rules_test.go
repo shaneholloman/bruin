@@ -2309,6 +2309,11 @@ type mockSQLParser struct {
 	mock.Mock
 }
 
+func (m *mockSQLParser) Start() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
 func (m *mockSQLParser) UsedTables(sql, dialect string) ([]string, error) {
 	args := m.Called(sql, dialect)
 	return args.Get(0).([]string), args.Error(1)
@@ -2322,6 +2327,26 @@ func (m *mockSQLParser) GetMissingDependenciesForAsset(asset *pipeline.Asset, pi
 func (m *mockSQLParser) ColumnLineage(sql, dialect string, schema sqlparser.Schema) (*sqlparser.Lineage, error) {
 	args := m.Called(sql, dialect, schema)
 	return args.Get(0).(*sqlparser.Lineage), args.Error(1)
+}
+
+func (m *mockSQLParser) RenameTables(sql, dialect string, tableMapping map[string]string) (string, error) {
+	args := m.Called(sql, dialect, tableMapping)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockSQLParser) AddLimit(sql string, limit int, dialect string) (string, error) {
+	args := m.Called(sql, limit, dialect)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockSQLParser) IsSingleSelectQuery(sql string, dialect string) (bool, error) {
+	args := m.Called(sql, dialect)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *mockSQLParser) Close() error {
+	args := m.Called()
+	return args.Error(0)
 }
 
 func TestUsedTableValidatorRule_ValidateAsset(t *testing.T) {
@@ -4226,6 +4251,444 @@ func TestValidateTableSensorTableParameter(t *testing.T) {
 			} else {
 				assert.Equal(t, []*Issue{}, got)
 			}
+		})
+	}
+}
+
+func TestValidateUnknownYAMLFields_Pipeline(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no definition file path returns no issues", func(t *testing.T) {
+		t.Parallel()
+		v := validateUnknownYAMLFields{fs: afero.NewMemMapFs()}
+		issues, err := v.ValidatePipeline(t.Context(), &pipeline.Pipeline{})
+		require.NoError(t, err)
+		assert.Empty(t, issues)
+	})
+
+	tests := []struct {
+		name     string
+		yaml     string
+		hasIssue bool
+	}{
+		{
+			name: "valid pipeline with known fields",
+			yaml: `name: test-pipeline
+schedule: daily
+start_date: "2024-01-01"
+`,
+			hasIssue: false,
+		},
+		{
+			name: "unknown top-level field",
+			yaml: `name: test-pipeline
+unknown_field: some-value
+`,
+			hasIssue: true,
+		},
+		{
+			name: "unknown nested field in notifications",
+			yaml: `name: test-pipeline
+notifications:
+  slack:
+    - channel: test
+      unknown_nested: true
+`,
+			hasIssue: true,
+		},
+		{
+			name:     "empty pipeline file",
+			yaml:     "{}",
+			hasIssue: false,
+		},
+		{
+			name:     "truly empty file",
+			yaml:     "",
+			hasIssue: false,
+		},
+		{
+			name: "type mismatch is not reported as unknown field",
+			yaml: `name: [1, 2, 3]
+`,
+			hasIssue: false,
+		},
+	}
+
+	ctx := t.Context()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fs := afero.NewMemMapFs()
+			pipelinePath := "/test/pipeline.yml"
+			err := afero.WriteFile(fs, pipelinePath, []byte(tt.yaml), 0o644)
+			require.NoError(t, err)
+
+			v := validateUnknownYAMLFields{fs: fs}
+			p := &pipeline.Pipeline{
+				DefinitionFile: pipeline.DefinitionFile{
+					Name: "pipeline.yml",
+					Path: pipelinePath,
+				},
+			}
+
+			issues, err := v.ValidatePipeline(ctx, p)
+			require.NoError(t, err)
+
+			if tt.hasIssue {
+				assert.NotEmpty(t, issues)
+			} else {
+				assert.Empty(t, issues)
+			}
+		})
+	}
+}
+
+func TestValidateUnknownYAMLFields_Asset(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no definition file path returns no issues", func(t *testing.T) {
+		t.Parallel()
+		v := validateUnknownYAMLFields{fs: afero.NewMemMapFs()}
+		issues, err := v.ValidateAsset(t.Context(), &pipeline.Pipeline{}, &pipeline.Asset{})
+		require.NoError(t, err)
+		assert.Empty(t, issues)
+	})
+
+	tests := []struct {
+		name     string
+		yaml     string
+		defType  pipeline.TaskDefinitionType
+		hasIssue bool
+	}{
+		{
+			name: "valid asset yaml",
+			yaml: `name: test-asset
+type: bq.sql
+materialization:
+  type: table
+  strategy: merge
+`,
+			defType:  pipeline.YamlTask,
+			hasIssue: false,
+		},
+		{
+			name: "unknown top-level field in asset",
+			yaml: `name: test-asset
+type: bq.sql
+some_unknown: value
+`,
+			defType:  pipeline.YamlTask,
+			hasIssue: true,
+		},
+		{
+			name: "unknown nested field in materialization",
+			yaml: `name: test-asset
+type: bq.sql
+materialization:
+  type: table
+  unknown_mat_field: value
+`,
+			defType:  pipeline.YamlTask,
+			hasIssue: true,
+		},
+		{
+			name: "valid asset with columns",
+			yaml: `name: test-asset
+type: bq.sql
+columns:
+  - name: id
+    type: integer
+    checks:
+      - name: not_null
+`,
+			defType:  pipeline.YamlTask,
+			hasIssue: false,
+		},
+	}
+
+	ctx := t.Context()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			fs := afero.NewMemMapFs()
+			assetPath := "/test/assets/task.yml"
+
+			err := afero.WriteFile(fs, assetPath, []byte(tt.yaml), 0o644)
+			require.NoError(t, err)
+
+			v := validateUnknownYAMLFields{fs: fs}
+			p := &pipeline.Pipeline{}
+			asset := &pipeline.Asset{
+				DefinitionFile: pipeline.TaskDefinitionFile{
+					Name: "task.yml",
+					Path: assetPath,
+					Type: tt.defType,
+				},
+			}
+
+			issues, err := v.ValidateAsset(ctx, p, asset)
+			require.NoError(t, err)
+
+			if tt.hasIssue {
+				assert.NotEmpty(t, issues)
+			} else {
+				assert.Empty(t, issues)
+			}
+		})
+	}
+}
+
+func TestEnsureDiscordFieldInPipelineIsValid(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		pipeline *pipeline.Pipeline
+		want     []*Issue
+	}{
+		{
+			name:     "no discord notifications, no issues",
+			pipeline: &pipeline.Pipeline{},
+			want:     noIssues,
+		},
+		{
+			name: "valid connection",
+			pipeline: &pipeline.Pipeline{
+				Notifications: pipeline.Notifications{
+					Discord: []pipeline.DiscordNotification{{Connection: "discord-conn"}},
+				},
+			},
+			want: noIssues,
+		},
+		{
+			name: "multiple valid connections",
+			pipeline: &pipeline.Pipeline{
+				Notifications: pipeline.Notifications{
+					Discord: []pipeline.DiscordNotification{
+						{Connection: "discord-conn-1"},
+						{Connection: "discord-conn-2"},
+					},
+				},
+			},
+			want: noIssues,
+		},
+		{
+			name: "empty connection",
+			pipeline: &pipeline.Pipeline{
+				Notifications: pipeline.Notifications{
+					Discord: []pipeline.DiscordNotification{{Connection: ""}},
+				},
+			},
+			want: []*Issue{{Description: pipelineDiscordConnectionFieldEmpty}},
+		},
+		{
+			name: "duplicate connection",
+			pipeline: &pipeline.Pipeline{
+				Notifications: pipeline.Notifications{
+					Discord: []pipeline.DiscordNotification{
+						{Connection: "discord-conn"},
+						{Connection: "discord-conn"},
+					},
+				},
+			},
+			want: []*Issue{{Description: pipelineDiscordConnectionFieldNotUnique}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			issues, err := EnsureDiscordFieldInPipelineIsValid(context.Background(), tt.pipeline)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, issues)
+		})
+	}
+}
+
+func TestEnsureSlackFieldInAssetIsValid(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		asset *pipeline.Asset
+		want  []*Issue
+	}{
+		{
+			name:  "no slack notifications, no issues",
+			asset: &pipeline.Asset{},
+			want:  noIssues,
+		},
+		{
+			name: "valid channel",
+			asset: &pipeline.Asset{
+				Notifications: &pipeline.Notifications{
+					Slack: []pipeline.SlackNotification{{Channel: "#alerts"}},
+				},
+			},
+			want: noIssues,
+		},
+		{
+			name: "valid channel without hash prefix",
+			asset: &pipeline.Asset{
+				Notifications: &pipeline.Notifications{
+					Slack: []pipeline.SlackNotification{{Channel: "alerts"}},
+				},
+			},
+			want: noIssues,
+		},
+		{
+			name: "empty channel",
+			asset: &pipeline.Asset{
+				Notifications: &pipeline.Notifications{
+					Slack: []pipeline.SlackNotification{{Channel: ""}},
+				},
+			},
+			want: []*Issue{{Description: assetSlackFieldEmptyChannel}},
+		},
+		{
+			name: "duplicate channel",
+			asset: &pipeline.Asset{
+				Notifications: &pipeline.Notifications{
+					Slack: []pipeline.SlackNotification{
+						{Channel: "#alerts"},
+						{Channel: "#alerts"},
+					},
+				},
+			},
+			want: []*Issue{{Description: assetSlackChannelFieldNotUnique}},
+		},
+		{
+			name: "duplicate channel with and without hash",
+			asset: &pipeline.Asset{
+				Notifications: &pipeline.Notifications{
+					Slack: []pipeline.SlackNotification{
+						{Channel: "#alerts"},
+						{Channel: "alerts"},
+					},
+				},
+			},
+			want: []*Issue{{Description: assetSlackChannelFieldNotUnique}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			issues, err := EnsureSlackFieldInAssetIsValid(context.Background(), &pipeline.Pipeline{}, tt.asset)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, issues)
+		})
+	}
+}
+
+func TestEnsureMSTeamsFieldInAssetIsValid(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		asset *pipeline.Asset
+		want  []*Issue
+	}{
+		{
+			name:  "no ms teams notifications, no issues",
+			asset: &pipeline.Asset{},
+			want:  noIssues,
+		},
+		{
+			name: "valid connection",
+			asset: &pipeline.Asset{
+				Notifications: &pipeline.Notifications{
+					MSTeams: []pipeline.MSTeamsNotification{{Connection: "teams-webhook"}},
+				},
+			},
+			want: noIssues,
+		},
+		{
+			name: "empty connection",
+			asset: &pipeline.Asset{
+				Notifications: &pipeline.Notifications{
+					MSTeams: []pipeline.MSTeamsNotification{{Connection: ""}},
+				},
+			},
+			want: []*Issue{{Description: assetMSTeamsConnectionFieldEmpty}},
+		},
+		{
+			name: "duplicate connection",
+			asset: &pipeline.Asset{
+				Notifications: &pipeline.Notifications{
+					MSTeams: []pipeline.MSTeamsNotification{
+						{Connection: "teams-webhook"},
+						{Connection: "teams-webhook"},
+					},
+				},
+			},
+			want: []*Issue{{Description: assetMSTeamsConnectionFieldNotUnique}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			issues, err := EnsureMSTeamsFieldInAssetIsValid(context.Background(), &pipeline.Pipeline{}, tt.asset)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, issues)
+		})
+	}
+}
+
+func TestEnsureDiscordFieldInAssetIsValid(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		asset *pipeline.Asset
+		want  []*Issue
+	}{
+		{
+			name:  "no discord notifications, no issues",
+			asset: &pipeline.Asset{},
+			want:  noIssues,
+		},
+		{
+			name: "valid connection",
+			asset: &pipeline.Asset{
+				Notifications: &pipeline.Notifications{
+					Discord: []pipeline.DiscordNotification{{Connection: "discord-conn"}},
+				},
+			},
+			want: noIssues,
+		},
+		{
+			name: "empty connection",
+			asset: &pipeline.Asset{
+				Notifications: &pipeline.Notifications{
+					Discord: []pipeline.DiscordNotification{{Connection: ""}},
+				},
+			},
+			want: []*Issue{{Description: assetDiscordConnectionFieldEmpty}},
+		},
+		{
+			name: "duplicate connection",
+			asset: &pipeline.Asset{
+				Notifications: &pipeline.Notifications{
+					Discord: []pipeline.DiscordNotification{
+						{Connection: "discord-conn"},
+						{Connection: "discord-conn"},
+					},
+				},
+			},
+			want: []*Issue{{Description: assetDiscordConnectionFieldNotUnique}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			issues, err := EnsureDiscordFieldInAssetIsValid(context.Background(), &pipeline.Pipeline{}, tt.asset)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, issues)
 		})
 	}
 }

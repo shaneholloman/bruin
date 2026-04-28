@@ -16,6 +16,7 @@ import (
 	"github.com/bruin-data/bruin/pkg/executor"
 	"github.com/bruin-data/bruin/pkg/glossary"
 	"github.com/bruin-data/bruin/pkg/jinja"
+	"github.com/bruin-data/bruin/pkg/path"
 	"github.com/bruin-data/bruin/pkg/pipeline"
 	"github.com/bruin-data/bruin/pkg/python"
 	"github.com/bruin-data/bruin/pkg/query"
@@ -24,7 +25,6 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/spf13/afero"
 	"github.com/yourbasic/graph"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -50,6 +50,16 @@ const (
 
 	pipelineMSTeamsConnectionFieldNotUnique = "The `connection` attribute under the MS Teams notifications must be unique"
 	pipelineMSTeamsConnectionFieldEmpty     = "MS Teams notifications `connection` attribute must not be empty"
+
+	pipelineDiscordConnectionFieldEmpty     = "Discord notifications `connection` attribute must not be empty"
+	pipelineDiscordConnectionFieldNotUnique = "The `connection` attribute under the Discord notifications must be unique"
+
+	assetSlackFieldEmptyChannel          = "Asset-level Slack notifications must have a `channel` attribute"
+	assetSlackChannelFieldNotUnique      = "The `channel` attribute under the asset-level Slack notifications must be unique"
+	assetMSTeamsConnectionFieldEmpty     = "Asset-level MS Teams notifications `connection` attribute must not be empty"
+	assetMSTeamsConnectionFieldNotUnique = "The `connection` attribute under the asset-level MS Teams notifications must be unique"
+	assetDiscordConnectionFieldEmpty     = "Asset-level Discord notifications `connection` attribute must not be empty"
+	assetDiscordConnectionFieldNotUnique = "The `connection` attribute under the asset-level Discord notifications must be unique"
 
 	pipelineConcurrencyMustBePositive    = "Pipeline concurrency must be 1 or greater"
 	pipelineMaxActiveStepsMustBePositive = "Pipeline max_active_steps must be a positive number"
@@ -969,6 +979,115 @@ func EnsureMSTeamsFieldInPipelineIsValid(ctx context.Context, p *pipeline.Pipeli
 	return issues, nil
 }
 
+func EnsureDiscordFieldInPipelineIsValid(ctx context.Context, p *pipeline.Pipeline) ([]*Issue, error) {
+	issues := make([]*Issue, 0)
+
+	discordConnections := make([]string, 0, len(p.Notifications.Discord))
+	for _, notification := range p.Notifications.Discord {
+		if notification.Connection == "" {
+			issues = append(issues, &Issue{
+				Description: pipelineDiscordConnectionFieldEmpty,
+			})
+			continue
+		}
+
+		if isStringInArray(discordConnections, notification.Connection) {
+			issues = append(issues, &Issue{
+				Description: pipelineDiscordConnectionFieldNotUnique,
+			})
+		}
+
+		discordConnections = append(discordConnections, notification.Connection)
+	}
+
+	return issues, nil
+}
+
+func EnsureSlackFieldInAssetIsValid(ctx context.Context, p *pipeline.Pipeline, asset *pipeline.Asset) ([]*Issue, error) {
+	issues := make([]*Issue, 0)
+
+	if asset.Notifications == nil {
+		return issues, nil
+	}
+
+	slackChannels := make([]string, 0, len(asset.Notifications.Slack))
+	for _, slack := range asset.Notifications.Slack {
+		channelWithoutHash := strings.TrimPrefix(slack.Channel, "#")
+		if channelWithoutHash == "" {
+			issues = append(issues, &Issue{
+				Description: assetSlackFieldEmptyChannel,
+			})
+			continue
+		}
+
+		if isStringInArray(slackChannels, channelWithoutHash) {
+			issues = append(issues, &Issue{
+				Description: assetSlackChannelFieldNotUnique,
+			})
+		}
+
+		slackChannels = append(slackChannels, channelWithoutHash)
+	}
+
+	return issues, nil
+}
+
+func EnsureMSTeamsFieldInAssetIsValid(ctx context.Context, p *pipeline.Pipeline, asset *pipeline.Asset) ([]*Issue, error) {
+	issues := make([]*Issue, 0)
+
+	if asset.Notifications == nil {
+		return issues, nil
+	}
+
+	MSTeamsConnections := make([]string, 0, len(asset.Notifications.MSTeams))
+	for _, notification := range asset.Notifications.MSTeams {
+		if notification.Connection == "" {
+			issues = append(issues, &Issue{
+				Description: assetMSTeamsConnectionFieldEmpty,
+			})
+			continue
+		}
+
+		if isStringInArray(MSTeamsConnections, notification.Connection) {
+			issues = append(issues, &Issue{
+				Description: assetMSTeamsConnectionFieldNotUnique,
+			})
+		}
+
+		MSTeamsConnections = append(MSTeamsConnections, notification.Connection)
+	}
+
+	return issues, nil
+}
+
+func EnsureDiscordFieldInAssetIsValid(ctx context.Context, p *pipeline.Pipeline, asset *pipeline.Asset) ([]*Issue, error) {
+	issues := make([]*Issue, 0)
+
+	if asset.Notifications == nil {
+		return issues, nil
+	}
+
+	discordConnections := make([]string, 0, len(asset.Notifications.Discord))
+	for _, notification := range asset.Notifications.Discord {
+		if notification.Connection == "" {
+			issues = append(issues, &Issue{
+				Description: assetDiscordConnectionFieldEmpty,
+			})
+			continue
+		}
+
+		if isStringInArray(discordConnections, notification.Connection) {
+			issues = append(issues, &Issue{
+				Description: assetDiscordConnectionFieldNotUnique,
+			})
+		}
+
+		discordConnections = append(discordConnections, notification.Connection)
+	}
+
+	return issues, nil
+}
+
 func EnsureMaterializationValuesAreValidForSingleAsset(ctx context.Context, p *pipeline.Pipeline, asset *pipeline.Asset) ([]*Issue, error) {
 	issues := make([]*Issue, 0)
 	if asset.Type == pipeline.AssetTypePython {
@@ -1540,15 +1659,9 @@ func (g *GlossaryChecker) EnsureParentDomainsExistInGlossary(ctx context.Context
 	return issues, nil
 }
 
-type sqlParser interface {
-	UsedTables(sql, dialect string) ([]string, error)
-	GetMissingDependenciesForAsset(asset *pipeline.Asset, pipeline *pipeline.Pipeline, renderer jinja.RendererInterface) ([]string, error)
-	ColumnLineage(sql, dialect string, schema sqlparser.Schema) (*sqlparser.Lineage, error)
-}
-
 type UsedTableValidatorRule struct {
 	renderer jinja.RendererInterface
-	parser   sqlParser
+	parser   sqlparser.Parser
 }
 
 func (u UsedTableValidatorRule) Name() string {
@@ -1777,27 +1890,32 @@ func EnsureTimeIntervalIsValidForAsset(ctx context.Context, p *pipeline.Pipeline
 	return issues, nil
 }
 
-var pipelineKnownYAMLFields = func() map[string]bool {
-	known := make(map[string]bool)
-	t := reflect.TypeOf(pipeline.Pipeline{})
-	for i := range t.NumField() {
-		tag := t.Field(i).Tag.Get("yaml")
-		if tag == "" || tag == "-" {
-			continue
-		}
-		name := strings.SplitN(tag, ",", 2)[0]
-		if name != "" && name != "-" {
-			known[name] = true
-		}
-	}
-	return known
-}()
-
-type validateUnknownPipelineFields struct {
+type validateUnknownYAMLFields struct {
 	fs afero.Fs
 }
 
-func (v *validateUnknownPipelineFields) Validate(ctx context.Context, p *pipeline.Pipeline) ([]*Issue, error) {
+// unknownFieldIssues filters a strict-decode error to only the lines about unknown fields,
+// ignoring type mismatches and other YAML errors that are handled elsewhere.
+func unknownFieldIssues(err error, task *pipeline.Asset) []*Issue {
+	if err == nil {
+		return nil
+	}
+
+	var issues []*Issue
+	for _, line := range strings.Split(err.Error(), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "not found in type") {
+			issues = append(issues, &Issue{
+				Task:        task,
+				Description: line,
+			})
+		}
+	}
+
+	return issues
+}
+
+func (v *validateUnknownYAMLFields) ValidatePipeline(ctx context.Context, p *pipeline.Pipeline) ([]*Issue, error) {
 	if p.DefinitionFile.Path == "" {
 		return nil, nil
 	}
@@ -1807,19 +1925,18 @@ func (v *validateUnknownPipelineFields) Validate(ctx context.Context, p *pipelin
 		return nil, errors.Wrapf(err, "failed to read pipeline file at %s", p.DefinitionFile.Path)
 	}
 
-	var rawFields map[string]interface{}
-	if err := yaml.Unmarshal(data, &rawFields); err != nil {
-		return nil, nil //nolint:nilerr
+	var target pipeline.Pipeline
+	strictErr := path.ConvertYamlToObjectStrict(data, &target)
+
+	return unknownFieldIssues(strictErr, nil), nil
+}
+
+func (v *validateUnknownYAMLFields) ValidateAsset(ctx context.Context, p *pipeline.Pipeline, asset *pipeline.Asset) ([]*Issue, error) {
+	if asset.DefinitionFile.Path == "" {
+		return nil, nil
 	}
 
-	var issues []*Issue
-	for field := range rawFields {
-		if !pipelineKnownYAMLFields[field] {
-			issues = append(issues, &Issue{
-				Description: fmt.Sprintf("unknown field '%s' in pipeline definition", field),
-			})
-		}
-	}
+	strictErr := pipeline.ValidateAssetYAML(v.fs, asset.DefinitionFile.Path, asset.DefinitionFile.Type)
 
-	return issues, nil
+	return unknownFieldIssues(strictErr, asset), nil
 }

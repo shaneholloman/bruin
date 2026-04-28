@@ -19,6 +19,25 @@
         "api_key"
       ]
     },
+    "SurveyMonkeyConnection": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "access_token": {
+          "type": "string"
+        },
+        "region": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "access_token"
+      ]
+    },
     "AirtableConnection": {
       "properties": {
         "name": {
@@ -113,6 +132,42 @@
         "issuer_id",
         "key_path",
         "key"
+      ]
+    },
+    "AppleAdsConnection": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "team_id": {
+          "type": "string"
+        },
+        "key_id": {
+          "type": "string"
+        },
+        "org_id": {
+          "type": "string"
+        },
+        "key_path": {
+          "type": "string"
+        },
+        "key_base64": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "client_id",
+        "team_id",
+        "key_id",
+        "org_id",
+        "key_path",
+        "key_base64"
       ]
     },
     "ApplovinMaxConnection": {
@@ -326,8 +381,16 @@
           },
           "type": "array",
           "default": [
+            "FabianoCaruana",
+            "Hikaru",
             "MagnusCarlsen",
-            "Hikaru"
+            "GothamChess",
+            "DanielNaroditsky",
+            "AnishGiri",
+            "Firouzja2003",
+            "LevonAronian",
+            "WesleySo",
+            "GarryKasparov"
           ]
         }
       },
@@ -390,6 +453,26 @@
       "required": [
         "name",
         "api_token"
+      ]
+    },
+    "JobtreadConnection": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "grant_key": {
+          "type": "string"
+        },
+        "organization_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "grant_key",
+        "organization_id"
       ]
     },
     "Connections": {
@@ -520,6 +603,12 @@
           },
           "type": "array"
         },
+        "g2": {
+          "items": {
+            "$ref": "#/$defs/G2Connection"
+          },
+          "type": "array"
+        },
         "klaviyo": {
           "items": {
             "$ref": "#/$defs/KlaviyoConnection"
@@ -529,6 +618,12 @@
         "adjust": {
           "items": {
             "$ref": "#/$defs/AdjustConnection"
+          },
+          "type": "array"
+        },
+        "surveymonkey": {
+          "items": {
+            "$ref": "#/$defs/SurveyMonkeyConnection"
           },
           "type": "array"
         },
@@ -565,6 +660,12 @@
         "kafka": {
           "items": {
             "$ref": "#/$defs/KafkaConnection"
+          },
+          "type": "array"
+        },
+        "rabbitmq": {
+          "items": {
+            "$ref": "#/$defs/RabbitMQConnection"
           },
           "type": "array"
         },
@@ -688,6 +789,12 @@
           },
           "type": "array"
         },
+        "appleads": {
+          "items": {
+            "$ref": "#/$defs/AppleAdsConnection"
+          },
+          "type": "array"
+        },
         "linkedinads": {
           "items": {
             "$ref": "#/$defs/LinkedInAdsConnection"
@@ -751,6 +858,18 @@
         "clickup": {
           "items": {
             "$ref": "#/$defs/ClickupConnection"
+          },
+          "type": "array"
+        },
+        "jobtread": {
+          "items": {
+            "$ref": "#/$defs/JobtreadConnection"
+          },
+          "type": "array"
+        },
+        "posthog": {
+          "items": {
+            "$ref": "#/$defs/PosthogConnection"
           },
           "type": "array"
         },
@@ -898,6 +1017,12 @@
           },
           "type": "array"
         },
+        "quicksight": {
+          "items": {
+            "$ref": "#/$defs/QuickSightConnection"
+          },
+          "type": "array"
+        },
         "trino": {
           "items": {
             "$ref": "#/$defs/TrinoConnection"
@@ -973,6 +1098,12 @@
         "vertica": {
           "items": {
             "$ref": "#/$defs/VerticaConnection"
+          },
+          "type": "array"
+        },
+        "dune": {
+          "items": {
+            "$ref": "#/$defs/DuneConnection"
           },
           "type": "array"
         }
@@ -1241,6 +1372,22 @@
       "required": [
         "name",
         "path"
+      ]
+    },
+    "DuneConnection": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "api_key": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "api_key"
       ]
     },
     "DynamoDBConnection": {
@@ -1707,6 +1854,22 @@
         "email"
       ]
     },
+    "G2Connection": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "api_token": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "api_token"
+      ]
+    },
     "HANAConnection": {
       "properties": {
         "name": {
@@ -1925,6 +2088,39 @@
         "name",
         "bootstrap_servers",
         "group_id"
+      ]
+    },
+    "RabbitMQConnection": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer"
+        },
+        "username": {
+          "type": "string"
+        },
+        "password": {
+          "type": "string"
+        },
+        "vhost": {
+          "type": "string"
+        },
+        "tls": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "host",
+        "username",
+        "password"
       ]
     },
     "KinesisConnection": {
@@ -2451,6 +2647,29 @@
         "database"
       ]
     },
+    "PosthogConnection": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "personal_api_key": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "personal_api_key",
+        "project_id"
+      ]
+    },
     "PrimerConnection": {
       "properties": {
         "name": {
@@ -2499,6 +2718,38 @@
         "client_id",
         "client_secret",
         "refresh_token"
+      ]
+    },
+    "QuickSightConnection": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "aws_access_key_id": {
+          "type": "string"
+        },
+        "aws_secret_access_key": {
+          "type": "string"
+        },
+        "aws_session_token": {
+          "type": "string"
+        },
+        "aws_region": {
+          "type": "string"
+        },
+        "aws_account_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "aws_access_key_id",
+        "aws_secret_access_key",
+        "aws_session_token",
+        "aws_region",
+        "aws_account_id"
       ]
     },
     "RedshiftConnection": {

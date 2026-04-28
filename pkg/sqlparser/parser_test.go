@@ -4,6 +4,7 @@ package sqlparser
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,6 +17,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// sharedSQLParser is initialized once in TestMain and reused across all tests
+// to avoid the ~3.5s startup cost of spawning a Python subprocess per test.
+var sharedSQLParser *SQLParser
+
+func TestMain(m *testing.M) {
+	var err error
+	sharedSQLParser, err = NewSQLParserCached()
+	if err != nil {
+		log.Fatalf("failed to create shared SQL parser: %v", err)
+	}
+	if err := sharedSQLParser.Start(); err != nil {
+		log.Fatalf("failed to start shared SQL parser: %v", err)
+	}
+
+	code := m.Run()
+
+	sharedSQLParser.Close()
+	os.Exit(code)
+}
+
 func TestSQLParserCloseResetsStarted(t *testing.T) {
 	parser := &SQLParser{started: true}
 
@@ -25,11 +46,7 @@ func TestSQLParserCloseResetsStarted(t *testing.T) {
 }
 
 func TestGetLineageForRunner(t *testing.T) {
-	lineage, err := NewSQLParser(true)
-	defer lineage.Close() //nolint
-
-	require.NoError(t, err)
-	require.NoError(t, lineage.Start())
+	lineage := sharedSQLParser
 
 	// Create a long query by appending a fixed string multiple times
 	baseQuery := `SELECT * FROM (SELECT * FROM table1) t1 JOIN (SELECT * FROM table2) t2`
@@ -706,13 +723,7 @@ GROUP BY 1`,
 }
 
 func TestSqlParser_GetTables(t *testing.T) {
-	s, err := NewSQLParser(true)
-	defer s.Close() //nolint
-
-	require.NoError(t, err)
-
-	err = s.Start()
-	require.NoError(t, err)
+	s := sharedSQLParser
 
 	tests := []struct {
 		name    string
@@ -840,10 +851,6 @@ COMMIT;`,
 			require.Equal(t, tt.want, got)
 		})
 	}
-
-	// wg.Wait()
-	s.Close()
-	require.NoError(t, err)
 }
 
 func TestSqlParser_RenameTables(t *testing.T) {
@@ -1050,6 +1057,70 @@ join t2
 	}
 }
 
+func TestSqlParser_RenameTables_TSQL_ThreePartNames(t *testing.T) {
+	tests := []struct {
+		name          string
+		query         string
+		tableMappings map[string]string
+		want          string
+	}{
+		{
+			name:  "3-part name schema rewrite",
+			query: "SELECT * FROM mydb.myschema.mytable",
+			tableMappings: map[string]string{
+				"mydb.myschema.mytable": "mydb.dev_myschema.mytable",
+			},
+			want: "SELECT * FROM mydb.dev_myschema.mytable",
+		},
+		{
+			name:  "3-part name schema rewrite with join",
+			query: "SELECT * FROM db1.schema1.table1 t1 JOIN db1.schema2.table2 t2 ON t1.id = t2.id",
+			tableMappings: map[string]string{
+				"db1.schema1.table1": "db1.dev_schema1.table1",
+				"db1.schema2.table2": "db1.dev_schema2.table2",
+			},
+			want: "SELECT * FROM db1.dev_schema1.table1 AS t1 JOIN db1.dev_schema2.table2 AS t2 ON t1.id = t2.id",
+		},
+		{
+			name:  "3-part name partial rewrite only rewrites mapped tables",
+			query: "SELECT * FROM db1.schema1.table1 t1 JOIN db2.schema2.table2 t2 ON t1.id = t2.id",
+			tableMappings: map[string]string{
+				"db1.schema1.table1": "db1.dev_schema1.table1",
+			},
+			want: "SELECT * FROM db1.dev_schema1.table1 AS t1 JOIN db2.schema2.table2 AS t2 ON t1.id = t2.id",
+		},
+		{
+			name:  "mix of 2-part and 3-part name rewrites",
+			query: "SELECT * FROM mydb.myschema.mytable t1 JOIN otherschema.othertable t2 ON t1.id = t2.id",
+			tableMappings: map[string]string{
+				"mydb.myschema.mytable":  "mydb.dev_myschema.mytable",
+				"otherschema.othertable": "dev_otherschema.othertable",
+			},
+			want: "SELECT * FROM mydb.dev_myschema.mytable AS t1 JOIN dev_otherschema.othertable AS t2 ON t1.id = t2.id",
+		},
+		{
+			name:  "2-part mapping does not strip catalog from 3-part SQL reference",
+			query: "SELECT * FROM mydb.myschema.mytable",
+			tableMappings: map[string]string{
+				"myschema.mytable": "dev_myschema.mytable",
+			},
+			want: "SELECT * FROM mydb.dev_myschema.mytable",
+		},
+	}
+
+	for _, parser := range startParsersForParity(t) { //nolint:paralleltest
+		t.Run(parser.name, func(t *testing.T) {
+			for _, tt := range tests { //nolint
+				t.Run(tt.name, func(t *testing.T) {
+					got, err := parser.parser.RenameTables(tt.query, "tsql", tt.tableMappings)
+					require.NoError(t, err)
+					require.Equal(t, tt.want, got)
+				})
+			}
+		})
+	}
+}
+
 func TestSqlParser_AddLimit(t *testing.T) { //nolint
 	tests := []struct {
 		name     string
@@ -1096,12 +1167,7 @@ func TestSqlParser_AddLimit(t *testing.T) { //nolint
 		},
 	}
 
-	parser, err := NewSQLParser(true)
-	require.NoError(t, err)
-
-	err = parser.Start()
-	require.NoError(t, err)
-	defer parser.Close()
+	parser := sharedSQLParser
 
 	for _, tt := range tests { //nolint
 		t.Run(tt.name, func(t *testing.T) {
@@ -1250,12 +1316,7 @@ SELECT {{ column }}, COUNT(*) AS count FROM {{ table }} GROUP BY {{ column }}
 		},
 	}
 
-	parser, err := NewSQLParser(true)
-	require.NoError(t, err)
-	defer parser.Close()
-
-	err = parser.Start()
-	require.NoError(t, err)
+	parser := sharedSQLParser
 
 	for _, tt := range tests { //nolint
 		t.Run(tt.name, func(t *testing.T) {
@@ -1513,14 +1574,7 @@ func startParsersForParity(t *testing.T) []startedParser {
 	t.Helper()
 
 	started := make([]startedParser, 0, 2)
-
-	sqlglotParser, err := NewSQLParser(true)
-	require.NoError(t, err)
-	require.NoError(t, sqlglotParser.Start())
-	t.Cleanup(func() {
-		require.NoError(t, sqlglotParser.Close())
-	})
-	started = append(started, startedParser{name: "sqlglot", parser: sqlglotParser})
+	started = append(started, startedParser{name: "sqlglot", parser: sharedSQLParser})
 
 	if err := ensureRustSQLParserFFI(); err != nil {
 		t.Logf("skipping rust parser parity tests: %v", err)
@@ -1568,21 +1622,13 @@ func getLineageWithRawSchema(t *testing.T, parser Parser, query, dialect string,
 	return &result
 }
 
-// newNormalizer returns a function that normalizes SQL through the sqlglot parser.
-// It creates a single parser instance that is cleaned up when the test finishes.
+// newNormalizer returns a function that normalizes SQL through the shared sqlglot parser.
 func newNormalizer(t *testing.T) func(query, dialect string) string {
 	t.Helper()
 
-	parser, err := NewSQLParser(true)
-	require.NoError(t, err)
-	require.NoError(t, parser.Start())
-	t.Cleanup(func() {
-		require.NoError(t, parser.Close())
-	})
-
 	return func(query, dialect string) string {
 		t.Helper()
-		normalized, err := parser.RenameTables(query, dialect, map[string]string{})
+		normalized, err := sharedSQLParser.RenameTables(query, dialect, map[string]string{})
 		require.NoError(t, err)
 		return normalized
 	}
@@ -1751,11 +1797,7 @@ select * from SOME_OTHER_DWH.dbo.my_table;
 }
 
 func TestSqlParser_GetTables_SQLServerHintsAndQuotedIdentifiers(t *testing.T) {
-	parser, err := NewSQLParser(true)
-	require.NoError(t, err)
-	defer parser.Close()
-
-	require.NoError(t, parser.Start())
+	parser := sharedSQLParser
 
 	tests := []struct {
 		name    string

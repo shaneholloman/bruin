@@ -118,6 +118,10 @@ environments:
           domain: "gorgiasurl"
           email: "gorgiasemail"
 
+      g2:
+        - name: conn-g2
+          api_token: "g2token"
+
       aws:
         - name: conn13
           access_key: "awskey"
@@ -135,6 +139,9 @@ environments:
       adjust:
         - name: conn16
           api_key: "adjustokey"
+      surveymonkey:
+        - name: "surveymonkey-default"
+          access_token: "test-token-123"
       anthropic:
         - name: "anthropic-1"
           api_key: "test-api-key"
@@ -152,6 +159,9 @@ environments:
       stripe:
         - name: conn18
           api_key: "stripekey"
+      dune:
+        - name: "dune-1"
+          api_key: "dune-api-key-123"
       appsflyer:
         - name: conn19
           api_key: "appsflyerkey"
@@ -159,6 +169,12 @@ environments:
         - name: conn20
           bootstrap_servers: "localhost:9093"
           group_id: "kafka123"
+      rabbitmq:
+        - name: conn21
+          host: "localhost"
+          port: 5672
+          username: "guest"
+          password: "guest"
       duckdb:
         - name: conn20
           path: "C:\\path\\to\\duck.db"
@@ -174,8 +190,16 @@ environments:
       chess:
         - name: conn24
           players:
-            - "MagnusCarlsen"
+            - "FabianoCaruana"
             - "Hikaru"
+            - "MagnusCarlsen"
+            - "GothamChess"
+            - "DanielNaroditsky"
+            - "AnishGiri"
+            - "Firouzja2003"
+            - "LevonAronian"
+            - "WesleySo"
+            - "GarryKasparov"
       airtable:
         - name: conn23
           base_id: "123"
@@ -260,6 +284,13 @@ environments:
           key_id: "key-id-123"
           key_path: "/path/to/key.pem"
           issuer_id: "issuer-id-123"
+      appleads:
+        - name: "appleads-1"
+          client_id: "SEARCHADS.client-id-123"
+          team_id: "SEARCHADS.team-id-123"
+          key_id: "key-id-123"
+          org_id: "19371590"
+          key_path: "/path/to/key.pem"
       linkedinads:
         - name: "linkedinads-1"
           access_token: "access-token-123"
@@ -305,6 +336,14 @@ environments:
       clickup:
         - name: "clickup-1"
           api_token: "token_123"
+      jobtread:
+        - name: "jobtread-1"
+          grant_key: "grant_key_123"
+          organization_id: "org_123"
+      posthog:
+        - name: "posthog-1"
+          personal_api_key: "phx_test123"
+          project_id: "12345"
       mixpanel:
         - name: "mixpanel-1"
           username: "user-123"

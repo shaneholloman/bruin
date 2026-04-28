@@ -100,10 +100,26 @@ func (o *BasicOperator) Run(ctx context.Context, ti scheduler.TaskInstance) erro
 		return errors.New("source uri is empty, which means the source connection is not configured correctly")
 	}
 
+	// Ensure the URI has the authority separator "//" after the scheme.
+	// Some source configs build URIs without a Host, causing Go's url.URL.String()
+	// to produce "scheme:?params" instead of "scheme://?params".
+	if parts := strings.SplitN(sourceURI, ":", 2); len(parts) == 2 && !strings.HasPrefix(parts[1], "//") {
+		sourceURI = parts[0] + "://" + parts[1]
+	}
+
 	// some connection types can be shared among sources, therefore inferring source URI from the connection type is not
 	// always feasible. In the case of GSheets, we have to reuse the same GCP credentials, but change the prefix with gsheets://
 	if asset.Parameters["source"] == "gsheets" {
 		sourceURI = strings.ReplaceAll(sourceURI, "bigquery://", "gsheets://")
+	}
+
+	// Auto-enable gong for sources that require it
+	parsed, err := url.Parse(sourceURI)
+	if err != nil {
+		return fmt.Errorf("failed to parse source URI: %w", err)
+	}
+	if _, ok := gongSources[parsed.Scheme]; ok {
+		asset.Parameters["use_gong"] = "true"
 	}
 
 	// Handle CDC mode - transform PostgreSQL URI to CDC format and auto-set merge strategy
@@ -169,6 +185,15 @@ func (o *BasicOperator) Run(ctx context.Context, ti scheduler.TaskInstance) erro
 
 	if strings.HasPrefix(destURI, "clickhouse://") {
 		destURI = applyClickHouseEngineParams(destURI, asset.Parameters)
+	}
+
+	// Also enable gong when the destination requires it
+	parsedDest, parseErr := url.Parse(destURI)
+	if parseErr != nil {
+		return fmt.Errorf("failed to parse destination URI: %w", parseErr)
+	}
+	if _, ok := gongDestinations[parsedDest.Scheme]; ok {
+		asset.Parameters["use_gong"] = "true"
 	}
 
 	destTable := asset.Name

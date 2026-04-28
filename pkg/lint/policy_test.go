@@ -9,10 +9,16 @@ import (
 	"github.com/bruin-data/bruin/pkg/sqlparser"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type mockSQLParser struct {
 	mock.Mock
+}
+
+func (m *mockSQLParser) Start() error {
+	args := m.Called()
+	return args.Error(0)
 }
 
 func (m *mockSQLParser) UsedTables(sql, dialect string) ([]string, error) {
@@ -28,6 +34,26 @@ func (m *mockSQLParser) GetMissingDependenciesForAsset(asset *pipeline.Asset, pi
 func (m *mockSQLParser) ColumnLineage(sql, dialect string, schema sqlparser.Schema) (*sqlparser.Lineage, error) {
 	args := m.Called(sql, dialect, schema)
 	return args.Get(0).(*sqlparser.Lineage), args.Error(1)
+}
+
+func (m *mockSQLParser) RenameTables(sql, dialect string, tableMapping map[string]string) (string, error) {
+	args := m.Called(sql, dialect, tableMapping)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockSQLParser) AddLimit(sql string, limit int, dialect string) (string, error) {
+	args := m.Called(sql, limit, dialect)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockSQLParser) IsSingleSelectQuery(sql string, dialect string) (bool, error) {
+	args := m.Called(sql, dialect)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *mockSQLParser) Close() error {
+	args := m.Called()
+	return args.Error(0)
 }
 
 func TestPolicyRuleDefinition(t *testing.T) {
@@ -203,5 +229,77 @@ func TestPolicyRuleSet(t *testing.T) {
 		mockParser := new(mockSQLParser)
 		_, err := spec.Rules(mockParser)
 		assert.Error(t, err)
+	})
+}
+
+func TestDescriptionMustNotBePlaceholderPolicy(t *testing.T) {
+	t.Parallel()
+
+	newRule := func(t *testing.T) lint.Rule {
+		t.Helper()
+
+		spec := &lint.PolicySpecification{
+			RuleSets: []lint.RuleSet{
+				{
+					Name:  "placeholder-description",
+					Rules: []string{"description-must-not-be-placeholder"},
+				},
+			},
+		}
+
+		rules, err := spec.Rules(nil)
+		require.NoError(t, err)
+		require.Len(t, rules, 1)
+		return rules[0]
+	}
+
+	t.Run("does not match placeholders inside larger words", func(t *testing.T) {
+		t.Parallel()
+
+		asset := &pipeline.Asset{
+			Description: "Tracks orders with wiped status records.",
+			Columns: []pipeline.Column{
+				{
+					Name:        "attempt_count",
+					Description: "Number of attempts to process the order.",
+				},
+			},
+		}
+
+		issues, err := newRule(t).ValidateAsset(t.Context(), &pipeline.Pipeline{}, asset)
+		require.NoError(t, err)
+		assert.Empty(t, issues)
+	})
+
+	t.Run("matches single-word placeholder tokens", func(t *testing.T) {
+		t.Parallel()
+
+		asset := &pipeline.Asset{
+			Description: "TODO: add the real asset description.",
+		}
+
+		issues, err := newRule(t).ValidateAsset(t.Context(), &pipeline.Pipeline{}, asset)
+		require.NoError(t, err)
+		require.Len(t, issues, 1)
+		assert.Contains(t, issues[0].Description, "'todo'")
+	})
+
+	t.Run("matches multi-word placeholder tokens", func(t *testing.T) {
+		t.Parallel()
+
+		asset := &pipeline.Asset{
+			Description: "Order data synchronized from Shopify.",
+			Columns: []pipeline.Column{
+				{
+					Name:        "status",
+					Description: "Description goes here.",
+				},
+			},
+		}
+
+		issues, err := newRule(t).ValidateAsset(t.Context(), &pipeline.Pipeline{}, asset)
+		require.NoError(t, err)
+		require.Len(t, issues, 1)
+		assert.Contains(t, issues[0].Description, "'description goes here'")
 	})
 }

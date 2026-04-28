@@ -83,6 +83,14 @@ var SourceTablesRegistry = map[string][]*SourceTable{
 		{Name: "creatives", PrimaryKey: "", IncKey: "", IncStrategy: "replace"},
 	},
 
+	// Apple Ads - Apple Search Ads campaign management
+	"appleads": {
+		{Name: "campaigns", PrimaryKey: "orgId,id", IncKey: "modificationTime", IncStrategy: "merge"},
+		{Name: "ad_groups", PrimaryKey: "orgId,id", IncKey: "modificationTime", IncStrategy: "merge"},
+		{Name: "ads", PrimaryKey: "orgId,id", IncKey: "modificationTime", IncStrategy: "merge"},
+		{Name: "creatives", PrimaryKey: "orgId,id", IncKey: "modificationTime", IncStrategy: "merge"},
+	},
+
 	// Apple AppStore - App marketplace
 	"appstore": {
 		{Name: "app-downloads-detailed", PrimaryKey: "", IncKey: "processing_date", IncStrategy: "merge"},
@@ -127,6 +135,19 @@ var SourceTablesRegistry = map[string][]*SourceTable{
 		{Name: "archives", PrimaryKey: "", IncKey: "", IncStrategy: "replace"},
 	},
 
+	// PostHog - Product analytics platform
+	"posthog": {
+		{Name: "persons", PrimaryKey: "id", IncKey: "last_seen_at", IncStrategy: "merge"},
+		{Name: "feature_flags", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "events", PrimaryKey: "id", IncKey: "timestamp", IncStrategy: "append"},
+		{Name: "cohorts", PrimaryKey: "id", IncKey: "last_calculation", IncStrategy: "merge"},
+		{Name: "event_definitions", PrimaryKey: "id", IncKey: "last_updated_at", IncStrategy: "merge"},
+		{Name: "property_definitions:event", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "property_definitions:person", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "property_definitions:session", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "annotations", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+	},
+
 	// ClickUp - Productivity platform
 	"clickup": {
 		{Name: "user", PrimaryKey: "id", IncKey: "", IncStrategy: "merge"},
@@ -138,6 +159,27 @@ var SourceTablesRegistry = map[string][]*SourceTable{
 
 	// Couchbase - NoSQL database (user-defined tables)
 	"couchbase": {},
+
+	// JobTread - Construction management platform
+	"jobtread": {
+		{Name: "accounts", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "jobs", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "contacts", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "documents", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "tasks", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "cost_codes", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "cost_types", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "cost_items", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "locations", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "custom_fields", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "daily_logs", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "time_entries", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "files", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "comments", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "document_payments", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "cost_groups", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "events", PrimaryKey: "id", IncKey: "createdAt", IncStrategy: "merge"},
+	},
 
 	// Cursor - AI-powered code editor
 	"cursor": {
@@ -207,6 +249,14 @@ var SourceTablesRegistry = map[string][]*SourceTable{
 
 	// DynamoDB - AWS NoSQL database (user-defined tables)
 	"dynamodb": {},
+
+	// Dune - Blockchain analytics platform
+	"dune": {
+		{Name: "queries"},
+		{Name: "query:<id>"},
+		{Name: "query:<id>:<params>"},
+		{Name: "sql:<raw SQL>"},
+	},
 
 	// Elasticsearch - Search and analytics engine (user-defined indices)
 	"elasticsearch": {},
@@ -310,6 +360,25 @@ var SourceTablesRegistry = map[string][]*SourceTable{
 		{Name: "tickets", PrimaryKey: "", IncKey: "", IncStrategy: "replace"},
 	},
 
+	// G2 - Software review platform
+	"g2": {
+		{Name: "products", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "my_products", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "vendors", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "categories", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "category_features", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "product_features", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "buyer_intent", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "competitors", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "discussions", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "downloads", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "integration_reviews", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "questions", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "reviews", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "screenshots", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+		{Name: "videos", PrimaryKey: "id", IncKey: "updated_at", IncStrategy: "merge"},
+	},
+
 	// Hostaway - Property management system
 	"hostaway": {
 		{Name: "listings", PrimaryKey: "", IncKey: "latestActivityOn", IncStrategy: "merge"},
@@ -323,13 +392,27 @@ var SourceTablesRegistry = map[string][]*SourceTable{
 
 	// HubSpot - CRM platform
 	"hubspot": {
-		{Name: "companies", PrimaryKey: "", IncKey: "", IncStrategy: "replace"},
-		{Name: "contacts", PrimaryKey: "", IncKey: "", IncStrategy: "replace"},
-		{Name: "deals", PrimaryKey: "", IncKey: "", IncStrategy: "replace"},
-		{Name: "tickets", PrimaryKey: "", IncKey: "", IncStrategy: "replace"},
-		{Name: "products", PrimaryKey: "", IncKey: "", IncStrategy: "replace"},
-		{Name: "quotes", PrimaryKey: "", IncKey: "", IncStrategy: "replace"},
-		{Name: "schemas", PrimaryKey: "id", IncKey: "", IncStrategy: "merge"},
+		{Name: "contacts"},
+		{Name: "companies"},
+		{Name: "deals"},
+		{Name: "tickets"},
+		{Name: "products"},
+		{Name: "quotes"},
+		{Name: "calls"},
+		{Name: "emails"},
+		{Name: "feedback_submissions"},
+		{Name: "line_items"},
+		{Name: "meetings"},
+		{Name: "notes"},
+		{Name: "tasks"},
+		{Name: "carts"},
+		{Name: "discounts"},
+		{Name: "fees"},
+		{Name: "invoices"},
+		{Name: "commerce_payments"},
+		{Name: "taxes"},
+		{Name: "owners"},
+		{Name: "schemas"},
 	},
 
 	// Indeed - Job search platform
@@ -385,6 +468,9 @@ var SourceTablesRegistry = map[string][]*SourceTable{
 
 	// Kafka - Event streaming (user-defined topics)
 	"kafka": {},
+
+	// RabbitMQ - Message broker (user-defined queues)
+	"rabbitmq": {},
 
 	// Kinesis - AWS streaming (user-defined streams)
 	"kinesis": {},
@@ -667,6 +753,16 @@ var SourceTablesRegistry = map[string][]*SourceTable{
 		{Name: "webhook_endpoint", PrimaryKey: "id", IncKey: "created", IncStrategy: "merge"},
 	},
 
+	// SurveyMonkey - Survey and feedback platform
+	"surveymonkey": {
+		{Name: "surveys", PrimaryKey: "id", IncKey: "date_modified", IncStrategy: "merge"},
+		{Name: "survey_details", PrimaryKey: "id", IncKey: "date_modified", IncStrategy: "merge"},
+		{Name: "survey_responses", PrimaryKey: "id", IncKey: "date_modified", IncStrategy: "merge"},
+		{Name: "collectors", PrimaryKey: "id", IncKey: "date_modified", IncStrategy: "merge"},
+		{Name: "contact_lists", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+		{Name: "contacts", PrimaryKey: "id", IncKey: "", IncStrategy: "replace"},
+	},
+
 	// TikTok Ads
 	"tiktokads": {
 		{Name: "custom:<dimensions>:<metrics>", PrimaryKey: "", IncKey: "", IncStrategy: "merge"},
@@ -708,6 +804,22 @@ var SourceTablesRegistry = map[string][]*SourceTable{
 		{Name: "users", PrimaryKey: "id", IncKey: "", IncStrategy: "merge"},
 		{Name: "participants", PrimaryKey: "id", IncKey: "join_time", IncStrategy: "merge"},
 	},
+}
+
+// gongSources is the set of source names that require gong to be enabled.
+var gongSources = map[string]bool{
+	"appleads":     true,
+	"dune":         true,
+	"g2":           true,
+	"jobtread":     true,
+	"posthog":      true,
+	"rabbitmq":     true,
+	"surveymonkey": true,
+}
+
+// gongDestinations is the set of destination schemes that require gong.
+var gongDestinations = map[string]bool{
+	"dynamodb": true,
 }
 
 // GetSourceTables returns the available tables for a specific ingestr source.

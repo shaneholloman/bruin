@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"golang.org/x/oauth2/google"
+	"gopkg.in/yaml.v3"
 )
 
 type AwsConnection struct {
@@ -369,6 +371,175 @@ func (c SnowflakeConnection) GetName() string {
 	return c.Name
 }
 
+// MarshalYAML implements custom YAML marshaling for SnowflakeConnection.
+// This ensures that the private_key field is written using YAML literal block scalar style (|)
+// to preserve newlines in the PEM-formatted private key.
+func (c SnowflakeConnection) MarshalYAML() (interface{}, error) {
+	node := &yaml.Node{Kind: yaml.MappingNode}
+
+	if c.Name != "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "name"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: c.Name},
+		)
+	}
+	if c.Account != "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "account"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: c.Account},
+		)
+	}
+	if c.Username != "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "username"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: c.Username},
+		)
+	}
+	if c.Password != "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "password"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: c.Password},
+		)
+	}
+	if c.Region != "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "region"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: c.Region},
+		)
+	}
+	if c.Role != "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "role"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: c.Role},
+		)
+	}
+	if c.Database != "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "database"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: c.Database},
+		)
+	}
+	if c.Schema != "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "schema"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: c.Schema},
+		)
+	}
+	if c.Warehouse != "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "warehouse"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: c.Warehouse},
+		)
+	}
+	if c.PrivateKeyPath != "" && c.PrivateKey == "" {
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "private_key_path"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: c.PrivateKeyPath},
+		)
+	}
+	if c.PrivateKey != "" {
+		// Normalize the private key to ensure proper PEM format with newlines
+		normalizedKey := normalizePrivateKey(c.PrivateKey)
+
+		// Use literal block scalar style (|) for private_key to preserve newlines
+		privateKeyNode := &yaml.Node{
+			Kind:  yaml.ScalarNode,
+			Value: normalizedKey,
+			Style: yaml.LiteralStyle,
+		}
+		// Ensure the private key ends with a newline for proper YAML formatting
+		if !strings.HasSuffix(normalizedKey, "\n") {
+			privateKeyNode.Value = normalizedKey + "\n"
+		}
+		node.Content = append(node.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "private_key"},
+			privateKeyNode,
+		)
+	}
+
+	return node, nil
+}
+
+// normalizePrivateKey converts a private key that may be on a single line with spaces
+// into proper PEM format with newlines between header, content, and footer.
+func normalizePrivateKey(key string) string {
+	if key == "" {
+		return key
+	}
+
+	// Replace literal \n with actual newlines
+	key = strings.ReplaceAll(key, "\\n", "\n")
+
+	// Normalize line endings
+	key = strings.ReplaceAll(key, "\r\n", "\n")
+	key = strings.ReplaceAll(key, "\r", "\n")
+
+	// Check if key already has proper newlines (more than one non-empty line)
+	lines := strings.Split(key, "\n")
+	nonEmptyLines := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			nonEmptyLines++
+		}
+	}
+
+	if nonEmptyLines > 1 {
+		// Key already has newlines, just clean it up
+		var cleanedLines []string
+		for _, line := range lines {
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" {
+				cleanedLines = append(cleanedLines, trimmed)
+			}
+		}
+		return strings.Join(cleanedLines, "\n")
+	}
+
+	// Key is on a single line - need to parse and reconstruct
+	// Find BEGIN and END markers
+	beginIdx := strings.Index(key, "-----BEGIN")
+	endMarkerStart := strings.Index(key, "-----END")
+
+	if beginIdx == -1 || endMarkerStart == -1 {
+		return key // Can't parse, return as-is
+	}
+
+	// Find the end of the BEGIN marker (after "PRIVATE KEY-----")
+	beginMarkerEnd := strings.Index(key[beginIdx:], "-----")
+	if beginMarkerEnd == -1 {
+		return key
+	}
+	// Find the second occurrence of "-----" after BEGIN
+	afterFirstDashes := beginIdx + beginMarkerEnd + 5
+	secondDashesInBegin := strings.Index(key[afterFirstDashes:], "-----")
+	if secondDashesInBegin == -1 {
+		return key
+	}
+	headerEnd := afterFirstDashes + secondDashesInBegin + 5
+
+	// Find the end of the END marker
+	endMarkerEnd := strings.Index(key[endMarkerStart:], "-----")
+	if endMarkerEnd == -1 {
+		return key
+	}
+	afterEndFirstDashes := endMarkerStart + endMarkerEnd + 5
+	secondDashesInEnd := strings.Index(key[afterEndFirstDashes:], "-----")
+	if secondDashesInEnd == -1 {
+		return key
+	}
+	footerEnd := afterEndFirstDashes + secondDashesInEnd + 5
+
+	header := strings.TrimSpace(key[beginIdx:headerEnd])
+	footer := strings.TrimSpace(key[endMarkerStart:footerEnd])
+	content := strings.TrimSpace(key[headerEnd:endMarkerStart])
+
+	// Remove all whitespace from content (base64 shouldn't have spaces)
+	content = strings.ReplaceAll(content, " ", "")
+	content = strings.ReplaceAll(content, "\t", "")
+
+	return header + "\n" + content + "\n" + footer
+}
+
 type HANAConnection struct {
 	Name     string `yaml:"name,omitempty" json:"name" mapstructure:"name"`
 	Username string `yaml:"username,omitempty" json:"username" mapstructure:"username"`
@@ -399,6 +570,15 @@ type GorgiasConnection struct {
 }
 
 func (c GorgiasConnection) GetName() string {
+	return c.Name
+}
+
+type G2Connection struct {
+	Name     string `yaml:"name,omitempty" json:"name" mapstructure:"name"`
+	APIToken string `yaml:"api_token,omitempty" json:"api_token" mapstructure:"api_token"`
+}
+
+func (c G2Connection) GetName() string {
 	return c.Name
 }
 
@@ -448,6 +628,15 @@ func (c StripeConnection) GetName() string {
 	return c.Name
 }
 
+type DuneConnection struct {
+	Name   string `yaml:"name,omitempty" json:"name" mapstructure:"name"`
+	APIKey string `yaml:"api_key,omitempty" json:"api_key" mapstructure:"api_key"`
+}
+
+func (c DuneConnection) GetName() string {
+	return c.Name
+}
+
 type NotionConnection struct {
 	Name   string `yaml:"name,omitempty" json:"name" mapstructure:"name"`
 	APIKey string `yaml:"api_key,omitempty" json:"api_key" mapstructure:"api_key"`
@@ -491,6 +680,20 @@ type KafkaConnection struct {
 }
 
 func (c KafkaConnection) GetName() string {
+	return c.Name
+}
+
+type RabbitMQConnection struct {
+	Name     string `yaml:"name,omitempty" json:"name" mapstructure:"name"`
+	Host     string `yaml:"host,omitempty" json:"host" mapstructure:"host"`
+	Port     int    `yaml:"port,omitempty" json:"port,omitempty" mapstructure:"port"`
+	Username string `yaml:"username,omitempty" json:"username" mapstructure:"username"`
+	Password string `yaml:"password,omitempty" json:"password" mapstructure:"password"`
+	Vhost    string `yaml:"vhost,omitempty" json:"vhost,omitempty" mapstructure:"vhost"`
+	TLS      bool   `yaml:"tls,omitempty" json:"tls,omitempty" mapstructure:"tls"`
+}
+
+func (c RabbitMQConnection) GetName() string {
 	return c.Name
 }
 
@@ -580,7 +783,7 @@ func (c GoogleSheetsConnection) GetName() string {
 
 type ChessConnection struct {
 	Name    string   `yaml:"name,omitempty" json:"name" mapstructure:"name"`
-	Players []string `yaml:"players,omitempty" json:"players" mapstructure:"players" jsonschema:"default=MagnusCarlsen,default=Hikaru"`
+	Players []string `yaml:"players,omitempty" json:"players" mapstructure:"players" jsonschema:"default=FabianoCaruana,default=Hikaru,default=MagnusCarlsen,default=GothamChess,default=DanielNaroditsky,default=AnishGiri,default=Firouzja2003,default=LevonAronian,default=WesleySo,default=GarryKasparov"`
 }
 
 func (c ChessConnection) GetName() string {
@@ -763,6 +966,20 @@ func (c AppStoreConnection) GetName() string {
 	return c.Name
 }
 
+type AppleAdsConnection struct {
+	Name      string `yaml:"name,omitempty" json:"name" mapstructure:"name"`
+	ClientID  string `yaml:"client_id,omitempty" json:"client_id" mapstructure:"client_id"`
+	TeamID    string `yaml:"team_id,omitempty" json:"team_id" mapstructure:"team_id"`
+	KeyID     string `yaml:"key_id,omitempty" json:"key_id" mapstructure:"key_id"`
+	OrgID     string `yaml:"org_id,omitempty" json:"org_id" mapstructure:"org_id"`
+	KeyPath   string `yaml:"key_path,omitempty" json:"key_path" mapstructure:"key_path"`
+	KeyBase64 string `yaml:"key_base64,omitempty" json:"key_base64" mapstructure:"key_base64"`
+}
+
+func (c AppleAdsConnection) GetName() string {
+	return c.Name
+}
+
 type LinkedInAdsConnection struct {
 	Name        string `yaml:"name,omitempty" json:"name" mapstructure:"name"`
 	AccessToken string `yaml:"access_token,omitempty" json:"access_token" mapstructure:"access_token"`
@@ -854,6 +1071,27 @@ type ClickupConnection struct {
 }
 
 func (c ClickupConnection) GetName() string {
+	return c.Name
+}
+
+type JobtreadConnection struct {
+	Name           string `yaml:"name,omitempty" json:"name" mapstructure:"name"`
+	GrantKey       string `yaml:"grant_key,omitempty" json:"grant_key" mapstructure:"grant_key"`
+	OrganizationID string `yaml:"organization_id,omitempty" json:"organization_id" mapstructure:"organization_id"`
+}
+
+func (c JobtreadConnection) GetName() string {
+	return c.Name
+}
+
+type PosthogConnection struct {
+	Name           string `yaml:"name,omitempty" json:"name" mapstructure:"name"`
+	PersonalAPIKey string `yaml:"personal_api_key,omitempty" json:"personal_api_key" mapstructure:"personal_api_key"`
+	ProjectID      string `yaml:"project_id,omitempty" json:"project_id" mapstructure:"project_id"`
+	BaseURL        string `yaml:"base_url,omitempty" json:"base_url,omitempty" mapstructure:"base_url"`
+}
+
+func (c PosthogConnection) GetName() string {
 	return c.Name
 }
 
@@ -1136,6 +1374,19 @@ type TableauConnection struct {
 	APIVersion                string `yaml:"api_version,omitempty" json:"api_version" mapstructure:"api_version"`
 }
 
+type QuickSightConnection struct {
+	Name               string `yaml:"name,omitempty" json:"name" mapstructure:"name"`
+	AwsAccessKeyID     string `yaml:"aws_access_key_id,omitempty" json:"aws_access_key_id" mapstructure:"aws_access_key_id"`
+	AwsSecretAccessKey string `yaml:"aws_secret_access_key,omitempty" json:"aws_secret_access_key" mapstructure:"aws_secret_access_key"`
+	AwsSessionToken    string `yaml:"aws_session_token,omitempty" json:"aws_session_token" mapstructure:"aws_session_token"`
+	AwsRegion          string `yaml:"aws_region,omitempty" json:"aws_region" mapstructure:"aws_region"`
+	AwsAccountID       string `yaml:"aws_account_id,omitempty" json:"aws_account_id" mapstructure:"aws_account_id"`
+}
+
+func (c QuickSightConnection) GetName() string {
+	return c.Name
+}
+
 type TrinoConnection struct {
 	Name     string `yaml:"name" json:"name" mapstructure:"name"`
 	Host     string `yaml:"host" json:"host" mapstructure:"host"`
@@ -1273,5 +1524,15 @@ type VerticaConnection struct {
 }
 
 func (c VerticaConnection) GetName() string {
+	return c.Name
+}
+
+type SurveyMonkeyConnection struct {
+	Name        string `yaml:"name,omitempty" json:"name" mapstructure:"name"`
+	AccessToken string `yaml:"access_token,omitempty" json:"access_token" mapstructure:"access_token"`
+	Region      string `yaml:"region,omitempty" json:"region,omitempty" mapstructure:"region"`
+}
+
+func (c SurveyMonkeyConnection) GetName() string {
 	return c.Name
 }
