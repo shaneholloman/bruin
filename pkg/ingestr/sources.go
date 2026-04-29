@@ -413,6 +413,8 @@ var SourceTablesRegistry = map[string][]*SourceTable{
 		{Name: "taxes"},
 		{Name: "owners"},
 		{Name: "schemas"},
+		{Name: "pipelines"},
+		{Name: "pipeline_stages"},
 	},
 
 	// Indeed - Job search platform
@@ -812,6 +814,7 @@ var gongSources = map[string]bool{
 	"appleads":     true,
 	"dune":         true,
 	"g2":           true,
+	"hubspot":      true,
 	"jobtread":     true,
 	"posthog":      true,
 	"rabbitmq":     true,
