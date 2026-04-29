@@ -72,6 +72,24 @@ parameters:
 | [owners](https://developers.hubspot.com/docs/api-reference/crm-crm-owners-v3/guide#crm-api-owners) | id | – | merge | Retrieves HubSpot users who can be assigned to CRM records. |
 | [schemas](https://developers.hubspot.com/docs/reference/api/crm/objects/schemas#get-%2Fcrm-object-schemas%2Fv3%2Fschemas) | id | – | merge | Returns all object schemas that have been defined for your account. |
 
+## Overriding associations
+
+Each built-in table fetches a default set of associations. You can override that list by appending `:<assoc1>,<assoc2>` to the table name. The suffix **replaces** the default list, so you can narrow it down to just what you need, or include custom object names. Use `<table>:` (colon with empty list) to skip associations entirely.
+
+```yaml
+parameters:
+  source_connection: my-hubspot
+  source_table: 'contacts:companies,deals'   # only fetch companies and deals
+  destination: postgres
+```
+
+```yaml
+parameters:
+  source_connection: my-hubspot
+  source_table: 'contacts:'                  # fetch contacts with no associations
+  destination: postgres
+```
+
 ## Custom Objects
 
 HubSpot allows you to create custom objects to store unique business data that's not covered by the standard objects. ingestr supports ingesting data from custom objects using the following format:
@@ -95,22 +113,20 @@ custom:<custom_object_name>:<associations>
 
 Ingesting a custom object called "licenses":
 
-```sh
-ingestr ingest \
-  --source-uri 'hubspot://?api_key=pat_test_12345' \
-  --source-table 'custom:licenses' \
-  --dest-uri duckdb:///hubspot.duckdb \
-  --dest-table 'licenses.data'
+```yaml
+parameters:
+  source_connection: my-hubspot
+  source_table: 'custom:licenses'
+  destination: postgres
 ```
 
 Ingesting a custom object with associations to companies, deals, and contacts:
 
-```sh
-ingestr ingest \
-  --source-uri 'hubspot://?api_key=pat_test_12345' \
-  --source-table 'custom:licenses:companies,deals,contacts' \
-  --dest-uri duckdb:///hubspot.duckdb \
-  --dest-table 'licenses.data'
+```yaml
+parameters:
+  source_connection: my-hubspot
+  source_table: 'custom:licenses:companies,deals,contacts'
+  destination: postgres
 ```
 
 When you include associations, the response will contain information about the related objects, allowing you to track relationships between your custom objects and standard HubSpot objects.
