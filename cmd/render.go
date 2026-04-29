@@ -94,9 +94,6 @@ func Render() *cli.Command {
 			if len(vars) > 0 {
 				DefaultPipelineBuilder.AddPipelineMutator(variableOverridesMutator(vars))
 			}
-			if variantName != "" {
-				DefaultPipelineBuilder.AddPipelineMutator(variantApplyVariablesMutator(variantName))
-			}
 
 			inputPath := c.Args().Get(0)
 			if inputPath == "" {
@@ -193,7 +190,11 @@ func Render() *cli.Command {
 					printError(fmt.Errorf("pipeline %q does not declare any variants but --variant=%q was provided", pl.Name, variantName), c.String("output"), "Variant not supported")
 					return cli.Exit("", 1)
 				}
-				render := variantRendererFactory(pl.Variables.Value(), variantName)
+				if err := pl.ApplyVariantVariables(variantName); err != nil {
+					printError(err, c.String("output"), "Failed to apply variant variables")
+					return cli.Exit("", 1)
+				}
+				render := jinja.VariantRendererFactory(pl.Variables.Value(), variantName)
 				if err := pipeline.RenderAssetTemplatedFields(asset, render); err != nil {
 					printError(err, c.String("output"), "Failed to render variant fields")
 					return cli.Exit("", 1)

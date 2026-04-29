@@ -427,21 +427,27 @@ func (r *ParseCommand) ParsePipeline(ctx context.Context, assetPath string, line
 		return cli.Exit("", 1)
 	}
 
-	foundPipeline, err := DefaultPipelineBuilder.CreatePipelineFromPath(ctx, pipelinePath, pipeline.WithMutate())
-	if err != nil {
-		printErrorJSON(err)
-
-		return cli.Exit("", 1)
-	}
-
 	// Default to the first variant (sorted by name) so existing consumers of
 	// `internal parse-pipeline` keep working when they hand it a variant
 	// pipeline. Pass --variant explicitly to pick a specific variant; use
 	// `internal list-variants` to discover what's available.
-	if variantName == "" && len(foundPipeline.Variants) > 0 {
-		variantName = foundPipeline.Variants.Names()[0]
+	if variantName == "" {
+		probe, err := DefaultPipelineBuilder.CreatePipelineFromPath(ctx, pipelinePath, pipeline.WithOnlyPipeline())
+		if err != nil {
+			printErrorJSON(err)
+			return cli.Exit("", 1)
+		}
+		if len(probe.Variants) > 0 {
+			variantName = probe.Variants.Names()[0]
+		}
 	}
-	if err := applyVariant(foundPipeline, variantName); err != nil {
+
+	loadOpts := []pipeline.CreatePipelineOption{pipeline.WithMutate()}
+	if variantName != "" {
+		loadOpts = append(loadOpts, pipeline.WithVariant(variantName))
+	}
+	foundPipeline, err := DefaultPipelineBuilder.CreatePipelineFromPath(ctx, pipelinePath, loadOpts...)
+	if err != nil {
 		printErrorJSON(err)
 		return cli.Exit("", 1)
 	}
@@ -580,15 +586,40 @@ func (r *ParseCommand) Run(ctx context.Context, assetPath string, lineage bool, 
 		printErrorJSON(err)
 		return cli.Exit("", 1)
 	}
+
+	// Resolve the variant ahead of building the pipeline. Default to the first
+	// variant so existing consumers that don't pass --variant still see a
+	// materialized pipeline. We probe the raw pipeline.yml to discover variants
+	// (no asset construction needed at this stage).
+	rawPipe, err := pipeline.PipelineFromPath(pipelineDefinitionPath, afero.NewOsFs())
+	if err != nil {
+		printErrorJSON(err)
+		return cli.Exit("", 1)
+	}
+	if variantName == "" && len(rawPipe.Variants) > 0 {
+		variantName = rawPipe.Variants.Names()[0]
+	}
+	if variantName != "" && len(rawPipe.Variants) == 0 {
+		err := fmt.Errorf("pipeline %q does not declare any variants but --variant=%q was provided", rawPipe.Name, variantName)
+		printErrorJSON(err)
+		return cli.Exit("", 1)
+	}
+
 	// column-level lineage requires the whole pipeline to be parsed by nature, therefore we need to use the default pipeline builder.
 	// however, since the primary usecase of this command requires speed, we'll use a faster alternative if there's no lineage requested.
 	if lineage {
-		foundPipeline, err = DefaultPipelineBuilder.CreatePipelineFromPath(ctx, pipelineDefinitionPath, pipeline.WithMutate())
+		loadOpts := []pipeline.CreatePipelineOption{pipeline.WithMutate()}
+		if variantName != "" {
+			loadOpts = append(loadOpts, pipeline.WithVariant(variantName))
+		}
+		foundPipeline, err = DefaultPipelineBuilder.CreatePipelineFromPath(ctx, pipelineDefinitionPath, loadOpts...)
 	} else {
-		foundPipeline, err = pipeline.PipelineFromPath(pipelineDefinitionPath, afero.NewOsFs())
-		if err != nil {
-			printErrorJSON(err)
-			return cli.Exit("", 1)
+		foundPipeline = rawPipe
+		if variantName != "" {
+			if err := foundPipeline.ApplyVariantVariables(variantName); err != nil {
+				printErrorJSON(err)
+				return cli.Exit("", 1)
+			}
 		}
 		err = DefaultPipelineBuilder.SetAssetColumnFromGlossary(asset, pipelineDefinitionPath)
 	}
@@ -604,23 +635,12 @@ func (r *ParseCommand) Run(ctx context.Context, assetPath string, lineage bool, 
 		return cli.Exit("", 1)
 	}
 
-	// Default to the first variant (sorted by name) so existing parse-asset
-	// consumers keep working when handed an asset inside a variant pipeline.
-	// Pass --variant explicitly to render against a specific variant.
-	if variantName == "" && len(foundPipeline.Variants) > 0 {
-		variantName = foundPipeline.Variants.Names()[0]
-	}
-	if variantName != "" && len(foundPipeline.Variants) == 0 {
-		err := fmt.Errorf("pipeline %q does not declare any variants but --variant=%q was provided", foundPipeline.Name, variantName)
-		printErrorJSON(err)
-		return cli.Exit("", 1)
-	}
+	// Render the standalone asset's templated fields against the variant's
+	// variables. The pipeline-level rendering already happened inside
+	// CreatePipelineFromPath for the lineage path; here we ensure the loose
+	// asset (CreateAssetFromFile) also reflects the variant.
 	if variantName != "" {
-		if err := foundPipeline.ApplyVariantVariables(variantName); err != nil {
-			printErrorJSON(err)
-			return cli.Exit("", 1)
-		}
-		render := variantRendererFactory(foundPipeline.Variables.Value(), variantName)
+		render := jinja.VariantRendererFactory(foundPipeline.Variables.Value(), variantName)
 		if err := pipeline.RenderAssetTemplatedFields(asset, render); err != nil {
 			printErrorJSON(err)
 			return cli.Exit("", 1)

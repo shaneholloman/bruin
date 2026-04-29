@@ -124,12 +124,6 @@ func Lint(isDebug *bool) *cli.Command {
 			if len(vars) > 0 {
 				DefaultPipelineBuilder.AddPipelineMutator(variableOverridesMutator(vars))
 			}
-			// dynamicVariant is a per-iteration variant selector. When --variant is
-			// set we pin it once; when --variant is empty we mutate it from the
-			// fan-out loop below so the asset parameter mutator sees the right
-			// variant's values during pipeline construction.
-			dynamicVariant := variantName
-			DefaultPipelineBuilder.AddPipelineMutator(dynamicVariantMutator(&dynamicVariant))
 
 			runID := time.Now().Format("2006_01_02_15_04_05")
 			if os.Getenv("BRUIN_RUN_ID") != "" {
@@ -241,30 +235,49 @@ func Lint(isDebug *bool) *cli.Command {
 
 				switch {
 				case variantName != "":
-					// Single-variant path: every variant pipeline is materialized
-					// against the requested variant; non-variant pipelines fall
-					// through unchanged via the builder wrapper.
-					linter := lint.NewLinter(pipelineFinder, &variantPipelineBuilder{inner: DefaultPipelineBuilder, variantName: variantName}, rules, logger, parser)
+					// Single-variant path: wrap the builder so every per-pipeline
+					// build inside Linter.Lint gets WithVariant injected. Non-
+					// variant pipelines no-op on WithVariant, so mixed projects
+					// work too.
+					linter := lint.NewLinter(pipelineFinder, &variantInjectingBuilder{inner: DefaultPipelineBuilder, variantName: variantName}, rules, logger, parser)
 					result, errr = linter.Lint(lintCtx, rootPath, PipelineDefinitionFiles, c)
 				default:
-					// No --variant flag. Probe paths first; only take the
-					// fan-out path when at least one pipeline declares
-					// variants. Otherwise stay on the canonical Linter.Lint
-					// path so its telemetry/stats logic runs.
-					hasVariants, perr := projectHasVariantPipelines(lintCtx, pipelineFinder, PipelineDefinitionFiles, rootPath, DefaultPipelineBuilder, &dynamicVariant)
+					// No --variant flag. Probe paths first; only take the fan-out
+					// path when at least one pipeline declares variants. Otherwise
+					// stay on Linter.Lint so its telemetry/stats logic runs.
+					pipelinePaths, perr := pipelineFinder(rootPath, PipelineDefinitionFiles)
 					if perr != nil {
-						printError(perr, c.String("output"), "Failed to inspect pipelines")
+						printError(perr, c.String("output"), "Failed to find pipelines")
 						return cli.Exit("", 1)
 					}
-					if !hasVariants {
+					anyVariants := false
+					for _, p := range pipelinePaths {
+						probe, err := DefaultPipelineBuilder.CreatePipelineFromPath(lintCtx, p, pipeline.WithOnlyPipeline())
+						if err != nil {
+							printError(err, c.String("output"), "Failed to inspect pipeline")
+							return cli.Exit("", 1)
+						}
+						if len(probe.Variants) > 0 {
+							anyVariants = true
+							break
+						}
+					}
+					if !anyVariants {
 						linter := lint.NewLinter(pipelineFinder, DefaultPipelineBuilder, rules, logger, parser)
 						result, errr = linter.Lint(lintCtx, rootPath, PipelineDefinitionFiles, c)
 						break
 					}
-					pipelines, perr := loadPipelinesExpandingVariants(lintCtx, pipelineFinder, PipelineDefinitionFiles, rootPath, DefaultPipelineBuilder, &dynamicVariant)
-					if perr != nil {
-						printError(perr, c.String("output"), "Failed to load pipelines")
-						return cli.Exit("", 1)
+
+					// Fan-out: each path expands to one or more materialized
+					// pipelines via the plural builder method.
+					var pipelines []*pipeline.Pipeline
+					for _, p := range pipelinePaths {
+						pls, err := DefaultPipelineBuilder.CreatePipelinesFromPath(lintCtx, p, pipeline.WithMutate())
+						if err != nil {
+							printError(err, c.String("output"), "Failed to load pipeline")
+							return cli.Exit("", 1)
+						}
+						pipelines = append(pipelines, pls...)
 					}
 					// Mirror Linter.Lint's stats + telemetry so the fan-out
 					// path doesn't drop the validate_assets event.

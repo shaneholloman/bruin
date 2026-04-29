@@ -146,10 +146,19 @@ func TestPipeline_MaterializeVariant(t *testing.T) {
 		assert.Equal(t, "select '{{ var.client }}' as c", pl.Assets[0].ExecutableFile.Content)
 	})
 
-	t.Run("does NOT render runtime query surfaces", func(t *testing.T) {
+	t.Run("does NOT render runtime surfaces", func(t *testing.T) {
 		t.Parallel()
+		// Variant materialization runs with only `var` and `variant` in scope.
+		// Anything that may reference runtime variables (start_date, end_date,
+		// this, …) — parameter values, hook queries, custom check queries — must
+		// be left untouched so the per-asset renderer can resolve them at
+		// execution time with the full Jinja context. Variant variable values
+		// still flow through because ApplyVariantVariables merges them into
+		// pl.Variables, so `{{ var.client }}` inside a parameter resolves
+		// correctly at run time.
 		pl := build()
 		pl.DefaultValues = &pipeline.DefaultValues{
+			Parameters: map[string]string{"region": "{{ var.region }}"},
 			Hooks: pipeline.Hooks{
 				Pre:  []pipeline.Hook{{Query: "select '{{ start_date }}'"}},
 				Post: []pipeline.Hook{{Query: "select '{{ end_date }}'"}},
@@ -167,8 +176,9 @@ func TestPipeline_MaterializeVariant(t *testing.T) {
 
 		require.NoError(t, pl.MaterializeVariant("client1", makeFakeRenderer))
 
-		assert.Equal(t, "alpha_db", pl.Assets[0].Parameters["database"])
+		assert.Equal(t, "{{ var.client }}_db", pl.Assets[0].Parameters["database"])
 		assert.Equal(t, "select '{{ start_date }}'", pl.Assets[0].Parameters["query"])
+		assert.Equal(t, "{{ var.region }}", pl.DefaultValues.Parameters["region"])
 		assert.Equal(t, "select '{{ end_date }}'", pl.Assets[0].CustomChecks[0].Query)
 		assert.Equal(t, "select '{{ start_datetime }}'", pl.Assets[0].Hooks.Pre[0].Query)
 		assert.Equal(t, "select '{{ end_datetime }}'", pl.Assets[0].Hooks.Post[0].Query)
@@ -283,6 +293,11 @@ func TestVariantVisitorCoversStringFields(t *testing.T) {
 		"Pipeline.Assets[].CustomChecks[].Query":                true,
 		"Pipeline.DefaultValues.Hooks.Pre[].Query":              true,
 		"Pipeline.DefaultValues.Hooks.Post[].Query":             true,
+
+		// Parameter values frequently embed runtime variables (e.g. {{ start_date }})
+		// and are resolved at execution time by the per-asset renderer.
+		"Pipeline.Assets[].Parameters[]":      true,
+		"Pipeline.DefaultValues.Parameters[]": true,
 
 		// Interval modifier templates have a dedicated run-time resolver.
 		"Pipeline.Assets[].IntervalModifiers.Start.Template":      true,

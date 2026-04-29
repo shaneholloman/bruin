@@ -17,12 +17,6 @@ type VariantSet map[string]map[string]any
 
 var variantNameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
-var runtimeRenderedParameterNames = map[string]bool{
-	"custom_sql": true,
-	"query":      true,
-	"sql":        true,
-}
-
 // Names returns the variant names in deterministic (sorted) order.
 func (vs VariantSet) Names() []string {
 	if len(vs) == 0 {
@@ -69,6 +63,11 @@ func (vs *VariantSet) UnmarshalJSON(data []byte) error {
 // by jinja.Renderer.Render — wired up in the cmd layer to avoid a pkg/pipeline ↔ pkg/jinja
 // import cycle.
 type RenderFunc func(string) (string, error)
+
+// VariantRendererFactory builds a RenderFunc for a given (vars, variantName)
+// pair. It is registered on a *Builder via SetVariantRenderer so the Builder
+// can materialize variants without taking a hard dependency on pkg/jinja.
+type VariantRendererFactory func(vars map[string]any, variantName string) RenderFunc
 
 // ApplyVariantVariables merges the named variant's overrides into pl.Variables.
 // It is intended to run early (e.g. as a pipeline mutator) so that any later
@@ -200,18 +199,14 @@ func renderPipelineStrings(render RenderFunc, pl *Pipeline) error {
 	return nil
 }
 
+// renderDefaultValues renders the identity-shaped fields under `default:` in
+// pipeline.yml. Parameters and hook queries are NOT rendered here — those
+// contain runtime templates (e.g. {{ start_date }}) and are resolved at
+// execution time by the existing per-asset renderer.
 func renderDefaultValues(render RenderFunc, dv *DefaultValues) error {
 	var err error
 	if dv.Type, err = maybeRender(render, "default.type", dv.Type); err != nil {
 		return err
-	}
-	for k, v := range dv.Parameters {
-		if runtimeRenderedParameterNames[strings.ToLower(k)] {
-			continue
-		}
-		if dv.Parameters[k], err = maybeRender(render, fmt.Sprintf("default.parameters[%s]", k), v); err != nil {
-			return err
-		}
 	}
 	for i := range dv.Secrets {
 		s := &dv.Secrets[i]
@@ -272,14 +267,9 @@ func renderAssetStrings(render RenderFunc, a *Asset) error {
 			return err
 		}
 	}
-	for k, v := range a.Parameters {
-		if runtimeRenderedParameterNames[strings.ToLower(k)] {
-			continue
-		}
-		if a.Parameters[k], err = maybeRender(render, fmt.Sprintf("asset[%s].parameters[%s]", originalName, k), v); err != nil {
-			return err
-		}
-	}
+	// Asset.Parameters is intentionally NOT rendered here. Parameter values
+	// frequently embed runtime variables (e.g. "{{ start_date }}") which the
+	// per-asset renderer resolves at execution time with the full Jinja context.
 	for i := range a.Secrets {
 		s := &a.Secrets[i]
 		if s.SecretKey, err = maybeRender(render, fmt.Sprintf("asset[%s].secrets[%d].key", originalName, i), s.SecretKey); err != nil {

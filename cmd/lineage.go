@@ -67,15 +67,15 @@ func (r *LineageCommand) Run(ctx context.Context, assetPath string, fullLineage 
 		return cli.Exit("", 1)
 	}
 
-	foundPipeline, err := DefaultPipelineBuilder.CreatePipelineFromPath(ctx, pipelinePath)
+	opts := []pipeline.CreatePipelineOption{}
+	if variantName != "" {
+		opts = append(opts, pipeline.WithVariant(variantName))
+	}
+	foundPipeline, err := DefaultPipelineBuilder.CreatePipelineFromPath(ctx, pipelinePath, opts...)
 	if err != nil {
-		r.errorPrinter.Println("failed to build pipeline, are you sure you have referred the right path?")
+		printError(err, output, "Failed to build pipeline")
 		r.errorPrinter.Println("\nHint: You need to run this command with a path to the asset file itself directly, and it needs to be inside a pipeline.")
 
-		return cli.Exit("", 1)
-	}
-	if err := applyVariant(foundPipeline, variantName); err != nil {
-		printError(err, output, "Variant resolution failed")
 		return cli.Exit("", 1)
 	}
 
