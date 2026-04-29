@@ -128,14 +128,30 @@ Report table names support an optional `:granularity:groupBy` suffix to control 
 - Granularity — `hourly`, `daily`, `weekly`, or `monthly`. When set, date is added to the primary key.
 - GroupBy — one or more dimensions separated by commas. Each dimension is added to the primary key.`campaign_reports` and `ad_group_reports` accept any of `countryOrRegion`, `ageRange`, `gender`, `deviceClass`, `adminArea`, `locality`, `countryCode`. `ad_reports` is restricted to `countryOrRegion` only.
 
-| Granularity | Max start date |
-| :--- | :--- |
-| hourly | 30 days |
-| daily | 90 days |
-| weekly | 24 months |
-| monthly | 24 months |
 
+**Granularity constraints** (from [Apple docs](https://developer.apple.com/documentation/apple_ads/reportingrequest)):
+
+| Granularity | Min start date | Max start date |
+|---|---|---|
+| `hourly` | — | 30 days |
+| `daily` | — | 90 days |
+| `weekly` | > 14 days | 24 months |
+| `monthly` | > 90 days (3 months) | 24 months |
 ## Examples
+
+### Aggregated campaign report (no granularity, no groupBy)
+
+```yaml
+name: public.campaign_reports
+type: ingestr
+connection: postgres
+
+parameters:
+  source_connection: my-appleads
+  source_table: 'campaign_reports'
+
+  destination: postgres
+```
 
 ### Daily campaign report by country
 
