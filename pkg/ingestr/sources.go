@@ -812,6 +812,7 @@ var gongSources = map[string]bool{
 	"appleads":     true,
 	"dune":         true,
 	"g2":           true,
+	"hubspot":      true,
 	"jobtread":     true,
 	"posthog":      true,
 	"rabbitmq":     true,
