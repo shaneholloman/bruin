@@ -24,6 +24,14 @@ const (
 	assetWithExcludeTagCountKey contextKey = "asset-with-exclude-tag-count"
 )
 
+// ExcludeTagKey and AssetWithExcludeTagCountKey are the context keys the linter
+// reads when running. They are exported so callers that bypass Linter.Lint (for
+// example, variant fan-out in the CLI) can populate the same context.
+var (
+	ExcludeTagKey               = excludeTagKey
+	AssetWithExcludeTagCountKey = assetWithExcludeTagCountKey
+)
+
 type (
 	pipelineFinder         func(root string, pipelineDefinitionFile []string) ([]string, error)
 	PipelineValidator      func(ctx context.Context, pipeline *pipeline.Pipeline) ([]*Issue, error)

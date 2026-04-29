@@ -793,6 +793,11 @@ func (s AthenaConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(Alias(s))
 }
 
+// Asset is the in-memory representation of one asset within a pipeline. When
+// adding a new exported string-valued field, extend renderAssetStrings in
+// pkg/pipeline/variant.go so variant materialization renders it. Asset bodies
+// (ExecutableFile.Content) are intentionally left for run-time Jinja and are
+// excluded from the visitor — see the allowlist in TestVariantVisitorCoversStringFields.
 type Asset struct { //nolint:recvcheck
 	ID                string             `json:"id" yaml:"-" mapstructure:"-"`
 	URI               string             `json:"uri" yaml:"uri,omitempty" mapstructure:"uri"`
@@ -1544,6 +1549,12 @@ func (mp *MetadataPush) HasAnyEnabled() bool {
 
 type Macro string
 
+// Pipeline is the in-memory representation of a pipeline.yml plus its loaded
+// assets. When adding a new exported field that may legitimately contain Jinja
+// (`{{ var.X }}`) — typically string-valued metadata fields — extend the
+// renderPipelineStrings visitor in pkg/pipeline/variant.go so variant
+// materialization picks it up. The TestVariantVisitorCoversStringFields test
+// guards against silently regressing this.
 type Pipeline struct {
 	LegacyID           string                 `json:"legacy_id" yaml:"id,omitempty" mapstructure:"id"`
 	Name               string                 `json:"name" yaml:"name,omitempty" mapstructure:"name"`
@@ -1569,6 +1580,7 @@ type Pipeline struct {
 	Snapshot           string                 `json:"snapshot" yaml:"snapshot,omitempty"`
 	Agent              bool                   `json:"agent" yaml:"agent,omitempty" mapstructure:"agent"`
 	Variables          Variables              `json:"variables" yaml:"variables,omitempty" mapstructure:"variables"`
+	Variants           VariantSet             `json:"variants,omitempty" yaml:"variants,omitempty" mapstructure:"variants"`
 	TasksByType        map[AssetType][]*Asset `json:"-" yaml:"-"`
 	tasksByName        map[string]*Asset      `yaml:"-"`
 	MacrosPath         string                 `json:"-" yaml:"-"`
@@ -1600,6 +1612,10 @@ func (p *Pipeline) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return err
 	}
 
+	if err := p.Variants.Validate(p.Variables); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -1616,6 +1632,10 @@ func (p *Pipeline) UnmarshalJSON(data []byte) error {
 	}
 
 	if err := validateCatchupMode(p.CatchupMode); err != nil {
+		return err
+	}
+
+	if err := p.Variants.Validate(p.Variables); err != nil {
 		return err
 	}
 

@@ -643,6 +643,10 @@ func Run(isDebug *bool) *cli.Command {
 				Usage:   "override pipeline variables with custom values",
 				Sources: cli.EnvVars("BRUIN_VARS"),
 			},
+			&cli.StringFlag{
+				Name:  "variant",
+				Usage: "name of the variant to materialize for a variant pipeline",
+			},
 			&cli.IntFlag{
 				Name:  "timeout",
 				Usage: "timeout for the entire pipeline run in seconds",
@@ -753,8 +757,17 @@ func Run(isDebug *bool) *cli.Command {
 				})
 			}
 
-			if vars := c.StringSlice("var"); len(vars) > 0 {
+			variantName := c.String("variant")
+			vars := c.StringSlice("var")
+			if variantName != "" && len(vars) > 0 {
+				printError(errors.New("--var and --variant cannot be used together"), c.String("output"), "Invalid flags")
+				return cli.Exit("", 1)
+			}
+			if len(vars) > 0 {
 				DefaultPipelineBuilder.AddPipelineMutator(variableOverridesMutator(vars))
+			}
+			if variantName != "" {
+				DefaultPipelineBuilder.AddPipelineMutator(variantApplyVariablesMutator(variantName))
 			}
 
 			runID := NewRunID()
@@ -778,6 +791,15 @@ func Run(isDebug *bool) *cli.Command {
 			preview, err := GetPipeline(runCtx, inputPath, runConfig, logger, pipeline.WithOnlyPipeline())
 			if err != nil {
 				return err
+			}
+
+			if variantName == "" && len(preview.Pipeline.Variants) > 0 {
+				printError(fmt.Errorf("pipeline %q declares variants %v; --variant is required", preview.Pipeline.Name, preview.Pipeline.Variants.Names()), c.String("output"), "Variant required")
+				return cli.Exit("", 1)
+			}
+			if err := renderVariantStringsForRun(preview.Pipeline, variantName); err != nil {
+				printError(err, c.String("output"), "Failed to materialize variant")
+				return cli.Exit("", 1)
 			}
 
 			var task *pipeline.Asset
@@ -859,6 +881,11 @@ func Run(isDebug *bool) *cli.Command {
 			pipelineInfo, err := GetPipeline(runCtx, inputPath, runConfig, logger)
 			if err != nil {
 				return err
+			}
+
+			if err := renderVariantStringsForRun(pipelineInfo.Pipeline, variantName); err != nil {
+				printError(err, c.String("output"), "Failed to materialize variant")
+				return cli.Exit("", 1)
 			}
 
 			// Auto-enable gong for CDC mode assets

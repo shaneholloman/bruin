@@ -211,6 +211,10 @@ func Patch() *cli.Command {
 						Usage:   "Output format. Possible values: plain, json",
 						Value:   "plain",
 					},
+					&cli.StringFlag{
+						Name:  "variant",
+						Usage: "variant name to materialize for variant pipelines",
+					},
 				},
 				Action: func(ctx context.Context, c *cli.Command) error {
 					inputPath := c.Args().First()
@@ -220,6 +224,10 @@ func Patch() *cli.Command {
 					}
 
 					output := c.String("output")
+					variantName := c.String("variant")
+					if variantName != "" {
+						DefaultPipelineBuilder.AddPipelineMutator(variantApplyVariablesMutator(variantName))
+					}
 
 					sqlParserInstance, err := sqlparser.NewSQLParser(false)
 					if err != nil {
@@ -242,6 +250,10 @@ func Patch() *cli.Command {
 						foundPipeline, err := DefaultPipelineBuilder.CreatePipelineFromPath(ctx, pipelinePath, pipeline.WithMutate())
 						if err != nil {
 							printErrorForOutput(output, fmt.Errorf("failed to build pipeline at '%s': %w", pipelinePath, err))
+							return cli.Exit("", 1)
+						}
+						if err := requireAndApplyVariant(foundPipeline, variantName); err != nil {
+							printErrorForOutput(output, err)
 							return cli.Exit("", 1)
 						}
 
@@ -280,6 +292,10 @@ func Patch() *cli.Command {
 						foundPipeline, err := DefaultPipelineBuilder.CreatePipelineFromPath(ctx, pipelinePath, pipeline.WithMutate())
 						if err != nil {
 							printErrorForOutput(output, fmt.Errorf("failed to build pipeline at '%s': %w", pipelinePath, err))
+							return cli.Exit("", 1)
+						}
+						if err := requireAndApplyVariant(foundPipeline, variantName); err != nil {
+							printErrorForOutput(output, err)
 							return cli.Exit("", 1)
 						}
 

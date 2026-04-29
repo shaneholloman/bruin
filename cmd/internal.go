@@ -52,6 +52,7 @@ func Internal() *cli.Command {
 			FetchTables(),
 			FetchColumns(),
 			ListTemplates(),
+			ListVariants(),
 			AssetMetadata(),
 			IngestrSources(),
 			LockAssetDependencies(),
@@ -72,6 +73,10 @@ func ParseAsset() *cli.Command {
 				Required:    false,
 				DefaultText: "false",
 			},
+			&cli.StringFlag{
+				Name:  "variant",
+				Usage: "variant to materialize for variant pipelines (defaults to the first variant)",
+			},
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
 			r := ParseCommand{
@@ -79,7 +84,7 @@ func ParseAsset() *cli.Command {
 				errorPrinter: errorPrinter,
 			}
 
-			return r.Run(ctx, c.Args().Get(0), c.Bool("column-lineage"))
+			return r.Run(ctx, c.Args().Get(0), c.Bool("column-lineage"), c.String("variant"))
 		},
 	}
 }
@@ -103,6 +108,10 @@ func ParsePipeline() *cli.Command {
 				Required:    false,
 				DefaultText: "false",
 			},
+			&cli.StringFlag{
+				Name:  "variant",
+				Usage: "variant to materialize for variant pipelines (defaults to the first variant)",
+			},
 		},
 		Action: func(ctx context.Context, c *cli.Command) error {
 			r := ParseCommand{
@@ -110,7 +119,51 @@ func ParsePipeline() *cli.Command {
 				errorPrinter: errorPrinter,
 			}
 
-			return r.ParsePipeline(ctx, c.Args().Get(0), c.Bool("column-lineage"), c.Bool("exp-slim-response"))
+			return r.ParsePipeline(ctx, c.Args().Get(0), c.Bool("column-lineage"), c.Bool("exp-slim-response"), c.String("variant"))
+		},
+	}
+}
+
+func ListVariants() *cli.Command {
+	return &cli.Command{
+		Name:      "list-variants",
+		Usage:     "list the variants declared in a pipeline.yml",
+		ArgsUsage: "[path to the pipeline]",
+		Action: func(ctx context.Context, c *cli.Command) error {
+			pipelineArg := c.Args().Get(0)
+			if pipelineArg == "" {
+				err := errors.New("pipeline path is required")
+				printErrorJSON(err)
+				return cli.Exit("", 1)
+			}
+			pipelinePath, err := path.GetPipelineRootFromTask(pipelineArg, PipelineDefinitionFiles)
+			if err != nil {
+				printErrorJSON(err)
+				return cli.Exit("", 1)
+			}
+			pl, err := DefaultPipelineBuilder.CreatePipelineFromPath(ctx, pipelinePath, pipeline.WithOnlyPipeline())
+			if err != nil {
+				printErrorJSON(err)
+				return cli.Exit("", 1)
+			}
+			type entry struct {
+				Name      string         `json:"name"`
+				Variables map[string]any `json:"variables"`
+			}
+			out := struct {
+				Pipeline string  `json:"pipeline"`
+				Variants []entry `json:"variants"`
+			}{Pipeline: pl.Name}
+			for _, name := range pl.Variants.Names() {
+				out.Variants = append(out.Variants, entry{Name: name, Variables: pl.Variants[name]})
+			}
+			js, err := json.Marshal(out)
+			if err != nil {
+				printErrorJSON(err)
+				return cli.Exit("", 1)
+			}
+			fmt.Println(string(js))
+			return nil
 		},
 	}
 }
@@ -341,7 +394,7 @@ type ParseCommand struct {
 	errorPrinter *color2.Color
 }
 
-func (r *ParseCommand) ParsePipeline(ctx context.Context, assetPath string, lineage bool, slimResponse bool) error {
+func (r *ParseCommand) ParsePipeline(ctx context.Context, assetPath string, lineage bool, slimResponse bool, variantName string) error {
 	// defer RecoverFromPanic()
 	var lineageWg conc.WaitGroup
 	var sqlParser *sqlparser.SQLParser
@@ -378,6 +431,18 @@ func (r *ParseCommand) ParsePipeline(ctx context.Context, assetPath string, line
 	if err != nil {
 		printErrorJSON(err)
 
+		return cli.Exit("", 1)
+	}
+
+	// Default to the first variant (sorted by name) so existing consumers of
+	// `internal parse-pipeline` keep working when they hand it a variant
+	// pipeline. Pass --variant explicitly to pick a specific variant; use
+	// `internal list-variants` to discover what's available.
+	if variantName == "" && len(foundPipeline.Variants) > 0 {
+		variantName = foundPipeline.Variants.Names()[0]
+	}
+	if err := applyVariant(foundPipeline, variantName); err != nil {
+		printErrorJSON(err)
 		return cli.Exit("", 1)
 	}
 
@@ -457,7 +522,7 @@ func (r *ParseCommand) ParsePipeline(ctx context.Context, assetPath string, line
 	return err
 }
 
-func (r *ParseCommand) Run(ctx context.Context, assetPath string, lineage bool) error {
+func (r *ParseCommand) Run(ctx context.Context, assetPath string, lineage bool, variantName string) error {
 	defer RecoverFromPanic()
 
 	var lineageWg conc.WaitGroup
@@ -537,6 +602,29 @@ func (r *ParseCommand) Run(ctx context.Context, assetPath string, lineage bool) 
 	if err != nil {
 		printErrorJSON(err)
 		return cli.Exit("", 1)
+	}
+
+	// Default to the first variant (sorted by name) so existing parse-asset
+	// consumers keep working when handed an asset inside a variant pipeline.
+	// Pass --variant explicitly to render against a specific variant.
+	if variantName == "" && len(foundPipeline.Variants) > 0 {
+		variantName = foundPipeline.Variants.Names()[0]
+	}
+	if variantName != "" && len(foundPipeline.Variants) == 0 {
+		err := fmt.Errorf("pipeline %q does not declare any variants but --variant=%q was provided", foundPipeline.Name, variantName)
+		printErrorJSON(err)
+		return cli.Exit("", 1)
+	}
+	if variantName != "" {
+		if err := foundPipeline.ApplyVariantVariables(variantName); err != nil {
+			printErrorJSON(err)
+			return cli.Exit("", 1)
+		}
+		render := variantRendererFactory(foundPipeline.Variables.Value(), variantName)
+		if err := pipeline.RenderAssetTemplatedFields(asset, render); err != nil {
+			printErrorJSON(err)
+			return cli.Exit("", 1)
+		}
 	}
 
 	type lineageIssueSummary struct {
