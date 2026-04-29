@@ -808,6 +808,7 @@ var SourceTablesRegistry = map[string][]*SourceTable{
 
 // gongSources is the set of source names that require gong to be enabled.
 var gongSources = map[string]bool{
+	"adjust":       true,
 	"appleads":     true,
 	"dune":         true,
 	"g2":           true,
