@@ -77,6 +77,7 @@ To ingest data from Apple Ads, you need to create an [asset configuration](/asse
 ```yaml
 name: public.campaigns
 type: ingestr
+connection: postgres
 
 parameters:
   source_connection: my-appleads
@@ -87,6 +88,7 @@ parameters:
 
 - `name`: The name of the asset.
 - `type`: Specifies the type of the asset. Set this to `ingestr` to use the ingestr data pipeline.
+- `connection`: The name of the destination connection defined in `.bruin.yml`.
 - `parameters`: A list of key–value pairs that specify the parameters for the ingestr asset:
   - `source_connection`: The name of the Apple Ads connection defined in `.bruin.yml`.
   - `source_table`: The name of the table to fetch. Supported tables: `campaigns`, `ad_groups`, `ads`, `creatives`.
