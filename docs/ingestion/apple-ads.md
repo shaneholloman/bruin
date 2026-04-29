@@ -102,12 +102,80 @@ As a result of this command, Bruin will ingest data from the given Apple Ads tab
 
 ## Tables
 
+### Entity tables
+
 | Table | Primary Key | Incremental Key | Strategy | Details |
 |---|---|---|---|---|
 | `campaigns` | `[orgId, id]` | `modificationTime` | merge | All ad campaigns in the organization, including budget, status, countries/regions, and timeframe. |
 | `ad_groups` | `[orgId, id]` | `modificationTime` | merge | Targeting groups inside each campaign — bids, audience/device/geo targeting, and keyword-matching settings. |
 | `ads` | `[orgId, id]` | `modificationTime` | merge | Individual ads within each ad group, linking a creative to its ad group and serving status. |
 | `creatives` | `[orgId, id]` | `modificationTime` | merge | Creative assets registered to the organization (custom product pages, text, media) that ads reference. |
+
+### Report tables
+
+Report tables return performance metrics (impressions, taps, installs, spend, etc.) from the [Apple Search Ads Reporting API](https://developer.apple.com/documentation/apple_ads/apple-search-ads-campaign-management-api-5).
+
+| Table | Primary Key | Incremental Key | Strategy | Details |
+|---|---|---|---|---|
+| `campaign_reports` | `[orgId, campaignId]` | `modificationTime` | merge | Campaign-level performance metrics. |
+| `ad_group_reports` | `[orgId, campaignId, adGroupId]` | `modificationTime` | merge | Ad group-level performance metrics. |
+| `ad_reports` | `[orgId, campaignId, adId]` | `modificationTime` | merge | Ad-level performance metrics. |
+
+Report table names support an optional `:granularity:groupBy` suffix to control time breakdown and dimensional grouping:
+
+- Granularity — `hourly`, `daily`, `weekly`, or `monthly`.
+- GroupBy — one or more dimensions separated by commas. `campaign_reports` and `ad_group_reports` accept any of `countryOrRegion`, `ageRange`, `gender`, `deviceClass`, `adminArea`, `locality`, `countryCode`. `ad_reports` is restricted to `countryOrRegion` only.
+
+| Granularity | Max start date |
+| :--- | :--- |
+| hourly | 30 days |
+| daily | 90 days |
+| weekly | 24 months |
+| monthly | 24 months |
+
+## Examples
+
+### Daily campaign report by country
+
+```yaml
+name: public.campaign_reports_daily_country
+type: ingestr
+connection: postgres
+
+parameters:
+  source_connection: my-appleads
+  source_table: 'campaign_reports:daily:countryOrRegion'
+
+  destination: postgres
+```
+
+### Aggregated report grouped by gender (no time breakdown)
+
+```yaml
+name: public.campaign_reports_gender
+type: ingestr
+connection: postgres
+
+parameters:
+  source_connection: my-appleads
+  source_table: 'campaign_reports::gender'
+
+  destination: postgres
+```
+
+### Monthly metrics grouped by country and gender
+
+```yaml
+name: public.campaign_reports_monthly_country_gender
+type: ingestr
+connection: postgres
+
+parameters:
+  source_connection: my-appleads
+  source_table: 'campaign_reports:monthly:countryOrRegion,gender'
+
+  destination: postgres
+```
 
 ## Notes
 
