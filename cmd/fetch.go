@@ -175,7 +175,8 @@ func Query() *cli.Command {
 				}
 				output := c.String("output")
 				if output == "csv" {
-					return handleError(output, errors.New("CSV output is not supported for --dry-run; use 'plain' or 'json'"))
+					fmt.Fprintln(os.Stderr, "CSV output is not supported for --dry-run; falling back to plain.")
+					output = outputFormatPlain
 				}
 
 				dryRunner, ok := conn.(query.QueryDryRunner)
