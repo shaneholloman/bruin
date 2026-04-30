@@ -73,6 +73,10 @@ func Render() *cli.Command {
 				Name:  "var",
 				Usage: "override pipeline variables with custom values",
 			},
+			&cli.StringFlag{
+				Name:  "variant",
+				Usage: "variant name to materialize for variant pipelines",
+			},
 			&cli.BoolFlag{
 				Name:  "raw-query",
 				Usage: "output only the raw query",
@@ -81,7 +85,13 @@ func Render() *cli.Command {
 		Action: func(ctx context.Context, c *cli.Command) error {
 			fullRefresh := c.Bool("full-refresh")
 
-			if vars := c.StringSlice("var"); len(vars) > 0 {
+			variantName := c.String("variant")
+			vars := c.StringSlice("var")
+			if variantName != "" && len(vars) > 0 {
+				printError(errors.New("--var and --variant cannot be used together"), c.String("output"), "Invalid flags")
+				return cli.Exit("", 1)
+			}
+			if len(vars) > 0 {
 				DefaultPipelineBuilder.AddPipelineMutator(variableOverridesMutator(vars))
 			}
 
@@ -169,6 +179,26 @@ func Render() *cli.Command {
 			if asset == nil {
 				printError(errors.New("no asset found"), c.String("output"), "Failed to read the asset definition file:")
 				return cli.Exit("", 1)
+			}
+
+			if variantName == "" && len(pl.Variants) > 0 {
+				printError(fmt.Errorf("pipeline %q declares variants %v; --variant is required", pl.Name, pl.Variants.Names()), c.String("output"), "Variant required")
+				return cli.Exit("", 1)
+			}
+			if variantName != "" {
+				if len(pl.Variants) == 0 {
+					printError(fmt.Errorf("pipeline %q does not declare any variants but --variant=%q was provided", pl.Name, variantName), c.String("output"), "Variant not supported")
+					return cli.Exit("", 1)
+				}
+				if err := pl.ApplyVariantVariables(variantName); err != nil {
+					printError(err, c.String("output"), "Failed to apply variant variables")
+					return cli.Exit("", 1)
+				}
+				render := jinja.VariantRendererFactory(pl.Variables.Value(), variantName)
+				if err := pipeline.RenderAssetTemplatedFields(asset, render); err != nil {
+					printError(err, c.String("output"), "Failed to render variant fields")
+					return cli.Exit("", 1)
+				}
 			}
 
 			resultsLocation := "s3://{destination-bucket}"

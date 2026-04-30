@@ -1,0 +1,23 @@
+name: "{{ var.client }}_pipe"
+schedule: "{{ var.schedule }}"
+
+variables:
+  client:
+    type: string
+    default: client_a
+  region:
+    type: string
+    default: us
+  schedule:
+    type: string
+    default: "@daily"
+
+variants:
+  client1:
+    client: alpha
+    region: us
+    schedule: "@hourly"
+  client2:
+    client: beta
+    region: eu
+    schedule: "0 6 * * *"

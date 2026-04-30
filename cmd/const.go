@@ -41,7 +41,7 @@ var (
 		FileNames:  []string{"glossary.yml", "glossary.yaml"},
 	}
 
-	DefaultPipelineBuilder = pipeline.NewBuilder(builderConfig, pipeline.CreateTaskFromYamlDefinition(fs), pipeline.CreateTaskFromFileComments(fs), fs, DefaultGlossaryReader)
+	DefaultPipelineBuilder = newDefaultPipelineBuilder()
 	SeedAssetsValidator    = &lint.SimpleRule{
 		Identifier:       "assets-seed-validation",
 		Fast:             true,
@@ -50,6 +50,12 @@ var (
 		ApplicableLevels: []lint.Level{lint.LevelAsset},
 	}
 )
+
+func newDefaultPipelineBuilder() *pipeline.Builder {
+	b := pipeline.NewBuilder(builderConfig, pipeline.CreateTaskFromYamlDefinition(fs), pipeline.CreateTaskFromFileComments(fs), fs, DefaultGlossaryReader)
+	b.SetVariantRenderer(jinja.VariantRendererFactory)
+	return b
+}
 
 func renderAssetParamsMutator(renderer jinja.RendererInterface) pipeline.AssetMutator {
 	return func(ctx context.Context, a *pipeline.Asset, p *pipeline.Pipeline) (*pipeline.Asset, error) {

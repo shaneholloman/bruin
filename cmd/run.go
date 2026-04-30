@@ -643,6 +643,10 @@ func Run(isDebug *bool) *cli.Command {
 				Usage:   "override pipeline variables with custom values",
 				Sources: cli.EnvVars("BRUIN_VARS"),
 			},
+			&cli.StringFlag{
+				Name:  "variant",
+				Usage: "name of the variant to materialize for a variant pipeline",
+			},
 			&cli.IntFlag{
 				Name:  "timeout",
 				Usage: "timeout for the entire pipeline run in seconds",
@@ -753,8 +757,18 @@ func Run(isDebug *bool) *cli.Command {
 				})
 			}
 
-			if vars := c.StringSlice("var"); len(vars) > 0 {
+			variantName := c.String("variant")
+			vars := c.StringSlice("var")
+			if variantName != "" && len(vars) > 0 {
+				printError(errors.New("--var and --variant cannot be used together"), c.String("output"), "Invalid flags")
+				return cli.Exit("", 1)
+			}
+			if len(vars) > 0 {
 				DefaultPipelineBuilder.AddPipelineMutator(variableOverridesMutator(vars))
+			}
+			variantOpts := []pipeline.CreatePipelineOption{}
+			if variantName != "" {
+				variantOpts = append(variantOpts, pipeline.WithVariant(variantName))
 			}
 
 			runID := NewRunID()
@@ -775,9 +789,31 @@ func Run(isDebug *bool) *cli.Command {
 			runCtx = context.WithValue(runCtx, pipeline.RunConfigQueryAnnotations, runConfig.Annotations)
 			runCtx = context.WithValue(runCtx, config.SecretsBackendContextKey, c.String("secrets-backend"))
 
+			// Preview load uses WithOnlyPipeline so we can introspect the
+			// pipeline.yml metadata (notably .Variants) before requiring the user
+			// to pick one. The full load below passes WithVariant so the builder
+			// materializes the right one.
 			preview, err := GetPipeline(runCtx, inputPath, runConfig, logger, pipeline.WithOnlyPipeline())
 			if err != nil {
 				return err
+			}
+
+			if variantName == "" && len(preview.Pipeline.Variants) > 0 {
+				printError(fmt.Errorf("pipeline %q declares variants %v; --variant is required", preview.Pipeline.Name, preview.Pipeline.Variants.Names()), c.String("output"), "Variant required")
+				return cli.Exit("", 1)
+			}
+			if variantName != "" {
+				if len(preview.Pipeline.Variants) == 0 {
+					printError(fmt.Errorf("pipeline %q does not declare any variants but --variant=%q was provided", preview.Pipeline.Name, variantName), c.String("output"), "Variant not supported")
+					return cli.Exit("", 1)
+				}
+				// Materialize the preview pipeline too, so downstream code that
+				// reads preview.Pipeline.Name (e.g. the state path) sees the
+				// rendered name.
+				if err := preview.Pipeline.MaterializeVariant(variantName, jinja.VariantRendererFactory); err != nil {
+					printError(err, c.String("output"), "Failed to materialize variant")
+					return cli.Exit("", 1)
+				}
 			}
 
 			var task *pipeline.Asset
@@ -856,7 +892,7 @@ func Run(isDebug *bool) *cli.Command {
 			renderer := jinja.NewRendererWithStartEndDatesAndMacros(&startDate, &endDate, &defaultExecutionDate, preview.Pipeline.Name, runID, nil, macroContent)
 			DefaultPipelineBuilder.AddAssetMutator(renderAssetParamsMutator(renderer))
 
-			pipelineInfo, err := GetPipeline(runCtx, inputPath, runConfig, logger)
+			pipelineInfo, err := GetPipeline(runCtx, inputPath, runConfig, logger, variantOpts...)
 			if err != nil {
 				return err
 			}

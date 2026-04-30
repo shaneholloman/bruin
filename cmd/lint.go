@@ -20,6 +20,7 @@ import (
 	"github.com/bruin-data/bruin/pkg/pipeline"
 	"github.com/bruin-data/bruin/pkg/query"
 	"github.com/bruin-data/bruin/pkg/sqlparser"
+	"github.com/bruin-data/bruin/pkg/telemetry"
 	"github.com/fatih/color"
 	"github.com/pkg/errors"
 	"github.com/spf13/afero"
@@ -88,6 +89,10 @@ func Lint(isDebug *bool) *cli.Command {
 				Name:  "var",
 				Usage: "override pipeline variables with custom values",
 			},
+			&cli.StringFlag{
+				Name:  "variant",
+				Usage: "variant name to materialize for variant pipelines",
+			},
 			&cli.BoolFlag{
 				Name:  "fast",
 				Usage: "run only fast validation rules, excludes some important rules such as query validation",
@@ -110,7 +115,13 @@ func Lint(isDebug *bool) *cli.Command {
 				fmt.Println()
 			}
 
-			if vars := c.StringSlice("var"); len(vars) > 0 {
+			variantName := c.String("variant")
+			vars := c.StringSlice("var")
+			if variantName != "" && len(vars) > 0 {
+				printError(errors.New("--var and --variant cannot be used together"), c.String("output"), "Invalid flags")
+				return cli.Exit("", 1)
+			}
+			if len(vars) > 0 {
 				DefaultPipelineBuilder.AddPipelineMutator(variableOverridesMutator(vars))
 			}
 
@@ -219,10 +230,75 @@ func Lint(isDebug *bool) *cli.Command {
 			var result *lint.PipelineAnalysisResult
 			var errr error
 			if asset == "" {
-				linter := lint.NewLinter(pipelineFinder, DefaultPipelineBuilder, rules, logger, parser)
 				logger.Debugf("running %d rules for pipeline validation", len(rules))
 				infoPrinter.Printf("Validating pipelines in '%s' for '%s' environment...\n", rootPath, cm.SelectedEnvironmentName)
-				result, errr = linter.Lint(lintCtx, rootPath, PipelineDefinitionFiles, c)
+
+				switch {
+				case variantName != "":
+					// Single-variant path: wrap the builder so every per-pipeline
+					// build inside Linter.Lint gets WithVariant injected. Non-
+					// variant pipelines no-op on WithVariant, so mixed projects
+					// work too.
+					linter := lint.NewLinter(pipelineFinder, &variantInjectingBuilder{inner: DefaultPipelineBuilder, variantName: variantName}, rules, logger, parser)
+					result, errr = linter.Lint(lintCtx, rootPath, PipelineDefinitionFiles, c)
+				default:
+					// No --variant flag. Probe paths first; only take the fan-out
+					// path when at least one pipeline declares variants. Otherwise
+					// stay on Linter.Lint so its telemetry/stats logic runs.
+					pipelinePaths, perr := pipelineFinder(rootPath, PipelineDefinitionFiles)
+					if perr != nil {
+						printError(perr, c.String("output"), "Failed to find pipelines")
+						return cli.Exit("", 1)
+					}
+					anyVariants := false
+					for _, p := range pipelinePaths {
+						probe, err := DefaultPipelineBuilder.CreatePipelineFromPath(lintCtx, p, pipeline.WithOnlyPipeline())
+						if err != nil {
+							printError(err, c.String("output"), "Failed to inspect pipeline")
+							return cli.Exit("", 1)
+						}
+						if len(probe.Variants) > 0 {
+							anyVariants = true
+							break
+						}
+					}
+					if !anyVariants {
+						linter := lint.NewLinter(pipelineFinder, DefaultPipelineBuilder, rules, logger, parser)
+						result, errr = linter.Lint(lintCtx, rootPath, PipelineDefinitionFiles, c)
+						break
+					}
+
+					// Fan-out: each path expands to one or more materialized
+					// pipelines via the plural builder method.
+					var pipelines []*pipeline.Pipeline
+					for _, p := range pipelinePaths {
+						pls, err := DefaultPipelineBuilder.CreatePipelinesFromPath(lintCtx, p, pipeline.WithMutate())
+						if err != nil {
+							printError(err, c.String("output"), "Failed to load pipeline")
+							return cli.Exit("", 1)
+						}
+						pipelines = append(pipelines, pls...)
+					}
+					// Mirror Linter.Lint's stats + telemetry so the fan-out
+					// path doesn't drop the validate_assets event.
+					excludeTag := c.String("exclude-tag")
+					excludedAssets := 0
+					assetStats := make(map[string]int)
+					for _, p := range pipelines {
+						for _, a := range p.Assets {
+							if lint.ContainsTag(a.Tags, excludeTag) {
+								excludedAssets++
+							}
+							assetStats[string(a.Type)]++
+						}
+					}
+					telemetry.SendEventWithAssetStats("validate_assets", assetStats, c)
+					lintCtxFanout := context.WithValue(lintCtx, lint.ExcludeTagKey, excludeTag)
+					lintCtxFanout = context.WithValue(lintCtxFanout, lint.AssetWithExcludeTagCountKey, excludedAssets)
+
+					linter := lint.NewLinter(pipelineFinder, DefaultPipelineBuilder, rules, logger, parser)
+					result, errr = linter.LintPipelines(lintCtxFanout, pipelines)
+				}
 			} else {
 				excludeTag := c.String("exclude-tag")
 				if excludeTag != "" {

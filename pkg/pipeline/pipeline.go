@@ -793,6 +793,11 @@ func (s AthenaConfig) MarshalJSON() ([]byte, error) {
 	return json.Marshal(Alias(s))
 }
 
+// Asset is the in-memory representation of one asset within a pipeline. When
+// adding a new exported string-valued field, extend renderAssetStrings in
+// pkg/pipeline/variant.go so variant materialization renders it. Asset bodies
+// (ExecutableFile.Content) are intentionally left for run-time Jinja and are
+// excluded from the visitor — see the allowlist in TestVariantVisitorCoversStringFields.
 type Asset struct { //nolint:recvcheck
 	ID                string             `json:"id" yaml:"-" mapstructure:"-"`
 	URI               string             `json:"uri" yaml:"uri,omitempty" mapstructure:"uri"`
@@ -1544,6 +1549,12 @@ func (mp *MetadataPush) HasAnyEnabled() bool {
 
 type Macro string
 
+// Pipeline is the in-memory representation of a pipeline.yml plus its loaded
+// assets. When adding a new exported field that may legitimately contain Jinja
+// (`{{ var.X }}`) — typically string-valued metadata fields — extend the
+// renderPipelineStrings visitor in pkg/pipeline/variant.go so variant
+// materialization picks it up. The TestVariantVisitorCoversStringFields test
+// guards against silently regressing this.
 type Pipeline struct {
 	LegacyID           string                 `json:"legacy_id" yaml:"id,omitempty" mapstructure:"id"`
 	Name               string                 `json:"name" yaml:"name,omitempty" mapstructure:"name"`
@@ -1569,6 +1580,7 @@ type Pipeline struct {
 	Snapshot           string                 `json:"snapshot" yaml:"snapshot,omitempty"`
 	Agent              bool                   `json:"agent" yaml:"agent,omitempty" mapstructure:"agent"`
 	Variables          Variables              `json:"variables" yaml:"variables,omitempty" mapstructure:"variables"`
+	Variants           VariantSet             `json:"variants,omitempty" yaml:"variants,omitempty" mapstructure:"variants"`
 	TasksByType        map[AssetType][]*Asset `json:"-" yaml:"-"`
 	tasksByName        map[string]*Asset      `yaml:"-"`
 	MacrosPath         string                 `json:"-" yaml:"-"`
@@ -1600,6 +1612,10 @@ func (p *Pipeline) UnmarshalYAML(unmarshal func(interface{}) error) error {
 		return err
 	}
 
+	if err := p.Variants.Validate(p.Variables); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -1616,6 +1632,10 @@ func (p *Pipeline) UnmarshalJSON(data []byte) error {
 	}
 
 	if err := validateCatchupMode(p.CatchupMode); err != nil {
+		return err
+	}
+
+	if err := p.Variants.Validate(p.Variables); err != nil {
 		return err
 	}
 
@@ -1905,12 +1925,22 @@ type Builder struct {
 	fs                 afero.Fs
 	assetMutators      []AssetMutator
 	pipelineMutators   []PipelineMutator
+	variantRenderer    VariantRendererFactory
 
 	GlossaryReader glossaryReader
 }
 
 func (b *Builder) SetGlossaryReader(reader glossaryReader) {
 	b.GlossaryReader = reader
+}
+
+// SetVariantRenderer wires a renderer factory used by WithVariant /
+// CreatePipelinesFromPath. The factory receives the effective variable values
+// (after merging the variant's overrides) plus the variant name and returns a
+// per-render function. Callers wire this once at builder construction; if it's
+// unset, attempting to materialize a variant returns a clear error.
+func (b *Builder) SetVariantRenderer(f VariantRendererFactory) {
+	b.variantRenderer = f
 }
 
 func (b *Builder) AddAssetMutator(m AssetMutator) {
@@ -1976,6 +2006,8 @@ type createPipelineConfig struct {
 	parseGitMetadata bool
 	isMutate         bool
 	onlyPipeline     bool
+	variantName      string
+	skipVariantCheck bool
 }
 
 type CreatePipelineOption func(*createPipelineConfig)
@@ -1995,6 +2027,25 @@ func WithMutate() CreatePipelineOption {
 func WithOnlyPipeline() CreatePipelineOption {
 	return func(o *createPipelineConfig) {
 		o.onlyPipeline = true
+	}
+}
+
+// WithVariant materializes the named variant during pipeline construction.
+// The Builder must have a renderer set via SetVariantRenderer; otherwise the
+// call errors. Passing an empty name is equivalent to omitting the option.
+func WithVariant(name string) CreatePipelineOption {
+	return func(o *createPipelineConfig) {
+		o.variantName = name
+	}
+}
+
+// withSkipVariantCheck is an internal option used by CreatePipelinesFromPath
+// to probe a path for variants without triggering the "variant required" guard.
+// Not exported because external callers should use WithOnlyPipeline (which also
+// skips the check) for the same effect.
+func withSkipVariantCheck() CreatePipelineOption {
+	return func(o *createPipelineConfig) {
+		o.skipVariantCheck = true
 	}
 }
 
@@ -2041,6 +2092,23 @@ func (b *Builder) CreatePipelineFromPath(ctx context.Context, pathToPipeline str
 	pipeline.DefinitionFile = DefinitionFile{
 		Name: filepath.Base(pipelineFilePath),
 		Path: absPipelineFilePath,
+	}
+
+	// Variant guard: when the pipeline declares variants, callers MUST pick
+	// one (via WithVariant) or use CreatePipelinesFromPath. WithOnlyPipeline
+	// is exempted because it explicitly asks for the un-materialized template
+	// view (used by `bruin internal list-variants` and the plural builder's
+	// own probe step).
+	if !config.onlyPipeline && !config.skipVariantCheck && len(pipeline.Variants) > 0 && config.variantName == "" {
+		return nil, fmt.Errorf("pipeline %q declares variants %v; pass WithVariant(name) or use CreatePipelinesFromPath", pipeline.Name, pipeline.Variants.Names())
+	}
+
+	// Apply the variant's variable overrides BEFORE asset construction so any
+	// asset-level mutator (e.g. parameter rendering) sees variant values.
+	if config.variantName != "" && len(pipeline.Variants) > 0 {
+		if err := pipeline.ApplyVariantVariables(config.variantName); err != nil {
+			return nil, err
+		}
 	}
 
 	if config.isMutate {
@@ -2128,7 +2196,70 @@ func (b *Builder) CreatePipelineFromPath(ctx context.Context, pathToPipeline str
 		}
 	}
 
+	// Final step for variant pipelines: render identity/structure string fields
+	// (asset names, dependencies, schedule, …) so the materialized pipeline has
+	// stable values. Variables.Merge ran earlier; the asset *Asset pointer graph
+	// stays valid because rendering only mutates values, not pointers.
+	if config.variantName != "" && len(pipeline.Variants) > 0 {
+		if b.variantRenderer == nil {
+			return nil, fmt.Errorf("WithVariant(%q) requires a renderer; call Builder.SetVariantRenderer", config.variantName)
+		}
+		variantName := config.variantName
+		if err := pipeline.RenderTemplatedFields(func(vars map[string]any) RenderFunc {
+			return b.variantRenderer(vars, variantName)
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	return pipeline, nil
+}
+
+// CreatePipelinesFromPath returns one *Pipeline per declared variant when the
+// pipeline at pathToPipeline is a variant pipeline, or a single-element slice
+// otherwise. Each returned Pipeline is fully materialized (variant variables
+// merged, identity fields rendered, assets loaded) and ready for downstream use.
+//
+// This is the entry point external services (e.g. asset-service) should prefer:
+// it makes the variant fan-out invisible to callers that don't care.
+func (b *Builder) CreatePipelinesFromPath(ctx context.Context, pathToPipeline string, opts ...CreatePipelineOption) ([]*Pipeline, error) {
+	cfg := createPipelineConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	// Honour an explicit WithVariant by delegating to the singular form.
+	if cfg.variantName != "" {
+		pl, err := b.CreatePipelineFromPath(ctx, pathToPipeline, opts...)
+		if err != nil {
+			return nil, err
+		}
+		return []*Pipeline{pl}, nil
+	}
+
+	// Probe the un-materialized form to discover declared variants without
+	// loading assets.
+	probe, err := b.CreatePipelineFromPath(ctx, pathToPipeline, append(opts, WithOnlyPipeline(), withSkipVariantCheck())...)
+	if err != nil {
+		return nil, err
+	}
+	if len(probe.Variants) == 0 {
+		pl, err := b.CreatePipelineFromPath(ctx, pathToPipeline, opts...)
+		if err != nil {
+			return nil, err
+		}
+		return []*Pipeline{pl}, nil
+	}
+
+	out := make([]*Pipeline, 0, len(probe.Variants))
+	for _, name := range probe.Variants.Names() {
+		pl, err := b.CreatePipelineFromPath(ctx, pathToPipeline, append(opts, WithVariant(name))...)
+		if err != nil {
+			return nil, fmt.Errorf("variant %q: %w", name, err)
+		}
+		out = append(out, pl)
+	}
+	return out, nil
 }
 
 func fileHasSuffix(arr []string, str string) bool {
